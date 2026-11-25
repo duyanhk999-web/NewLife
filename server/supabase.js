@@ -5,6 +5,7 @@
    dev and server/test/test.js continue to work in-memory. */
 const { createClient } = require('@supabase/supabase-js');
 const { randomUUID } = require('crypto');
+const wsTransport = typeof WebSocket !== 'undefined' ? WebSocket : require('ws');
 
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
@@ -13,6 +14,7 @@ const PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPA
 const admin = (SUPABASE_URL && SECRET_KEY)
   ? createClient(SUPABASE_URL, SECRET_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
+      realtime: { transport: wsTransport },
     })
   : null;
 
