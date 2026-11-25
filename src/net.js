@@ -103,7 +103,7 @@
     },
 
     /* Join (or create) a room. Resolves {ok:true, sessionId} or {ok:false, reason}.
-       4 s timeout: a slow/unreachable server must not block the game. */
+       10 s timeout: allows Railway cold-start while never blocking offline fallback. */
     joinRoom: function (roomName, options) {
       var self = this;
       self._lastJoinOptions = { roomName: roomName, options: options || {} };
@@ -113,8 +113,8 @@
         var timer = setTimeout(function () {
           if (done) return;
           done = true;
-          resolve({ ok: false, reason: 'timeout-4s' });
-        }, 4000);
+          resolve({ ok: false, reason: 'timeout-10s' });
+        }, 10000);
         var p;
         try {
           p = self.client.joinOrCreate(roomName || 'city', options || {});

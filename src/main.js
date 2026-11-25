@@ -2659,12 +2659,13 @@
   function serverUrlFromPage() {
     try {
       var q = new URLSearchParams(window.location.search);
+      if (q.get('offline') === '1') return null;
       var s = q.get('server');
       if (s) return s;
     } catch (e) { /* URLSearchParams unsupported — fall through */ }
     var host = window.location.hostname || '';
     if (host === 'localhost' || host === '127.0.0.1' || host === '') return 'ws://localhost:2567';
-    return null; // no public server configured yet -> offline mode
+    return 'wss://newlife.up.railway.app';
   }
 
   function goOffline(reason) {
