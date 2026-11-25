@@ -38,11 +38,13 @@
   var BICYCLE_SPEED = 234, MOTORBIKE_SPEED = 324, BIKE_SPEED = 234;
   var SHOWROOM_POS = { x: 1665, y: 2850 }; // Showroom Xe Máy POI (Map v2)
   var MOTEL_POS = { x: 2910, y: 2865 };    // Khu Nhà Trọ POI (Map v2)
+  var MOTEL_SPAWN = { x: 2910, y: 3100 };  // Open ground south of Motel (outside building rect)
   var MOUNT_RANGE = 80;   // must be within 80 px of the parked vehicle (§8.1)
   var PICKUP_RANGE = 120; // taxi pickup / revive range for passengers
   var DROPOFF_RANGE = 80; // must be within 80 px of the destination
   var WAREHOUSE_POS = { x: 4155, y: 2910 }; // Kho Hàng Trung Tâm POI (Map v2: building centre)
   var HOSPITAL_POS = { x: 4125, y: 1635 };  // Bệnh Viện POI (Map v2: building centre)
+  var HOSPITAL_SPAWN = { x: 4125, y: 1890 }; // Open ground south of Hospital (outside 3840..4410,1425..1845)
   var FAINT_SECONDS = 60;
   var HOSPITAL_BUTTON_DELAY_S = 10; // "Về Bệnh viện" appears after 10 s (§3.2.4)
   var DOCTOR_REWARD = 25000;
@@ -336,9 +338,9 @@
   return {
     WALK_SPEED: WALK_SPEED, SPRINT_SPEED: SPRINT_SPEED, BIKE_SPEED: BIKE_SPEED,
     BICYCLE_SPEED: BICYCLE_SPEED, MOTORBIKE_SPEED: MOTORBIKE_SPEED,
-    SHOWROOM_POS: SHOWROOM_POS, MOTEL_POS: MOTEL_POS,
+    SHOWROOM_POS: SHOWROOM_POS, MOTEL_POS: MOTEL_POS, MOTEL_SPAWN: MOTEL_SPAWN,
     MOUNT_RANGE: MOUNT_RANGE, PICKUP_RANGE: PICKUP_RANGE, DROPOFF_RANGE: DROPOFF_RANGE,
-    WAREHOUSE_POS: WAREHOUSE_POS, HOSPITAL_POS: HOSPITAL_POS,
+    WAREHOUSE_POS: WAREHOUSE_POS, HOSPITAL_POS: HOSPITAL_POS, HOSPITAL_SPAWN: HOSPITAL_SPAWN,
     FAINT_SECONDS: FAINT_SECONDS, HOSPITAL_BUTTON_DELAY_S: HOSPITAL_BUTTON_DELAY_S,
     DOCTOR_REWARD: DOCTOR_REWARD,
     REVIVE_RANGE: REVIVE_RANGE, TALK_RANGE: TALK_RANGE,

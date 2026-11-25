@@ -473,6 +473,7 @@
       case 'ALREADY_PROCESSED': return 'Đơn này đã giao xong rồi (chống trùng).';
       case 'EXPIRED': return 'Đơn đã hết hạn — không thưởng, nhận đơn mới được rồi.';
       case 'ACTIVE_ORDER': return 'Đang có đơn Shipper — giao xong / hủy rồi mới đổi nghề.';
+      case 'ACTIVE_RIDE': return 'Đang chở khách Taxi — trả khách xong rồi mới đổi nghề.';
       case 'ORDER_TAKEN': return 'Đơn này vừa có người nhận — đã cấp đơn khác cho bạn.';
       case 'NOT_TAXI_DRIVER': return 'Chọn nghề Tài xế trước đã.';
       case 'NO_MOTORBIKE': return 'Taxi phải dùng xe máy — mua xe máy ở Showroom trước.';

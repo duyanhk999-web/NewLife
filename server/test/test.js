@@ -290,6 +290,10 @@ async function main() {
       const completeOk = await waitForMsg(jobResultsA,
         (m) => m.type === 'shipper' && m.ok && m.action === 'complete');
       const completeMsg = jobResultsA.find((m) => m.type === 'shipper' && m.ok && m.action === 'complete');
+      await waitFor(() => {
+        const p = statePlayer(roomB, roomA.sessionId);
+        return p && p.cash === cashBefore + (order ? order.reward : 0);
+      }, 1000);
       const pA1 = statePlayer(roomB, roomA.sessionId);
       check('M3 shipper deliver pays server-calculated reward once',
         completeOk && completeMsg && completeMsg.reward === order.reward && pA1 && pA1.cash === cashBefore + order.reward,
@@ -671,10 +675,37 @@ async function main() {
     const hospOk = await waitFor(
       () => { const p = statePlayer(roomA, roomB.sessionId); return p && !p.isFainted && p.hp === 50; }, 5000);
     const pBhosp = statePlayer(roomA, roomB.sessionId);
-    check('M3 hospital auto-revive: fee 22500, cash 2500, hp 50 at hospital',
+    const expHosp = M3.HOSPITAL_SPAWN || { x: 4125, y: 1890 };
+    check('M3 hospital auto-revive: fee 22500, cash 2500, hp 50 at hospital entrance',
       hospOk && pBhosp && pBhosp.cash === 2500 && pBhosp.bank === 0
-        && Math.abs(pBhosp.x - 4125) < 5 && Math.abs(pBhosp.y - 1635) < 5,
+        && Math.abs(pBhosp.x - expHosp.x) < 5 && Math.abs(pBhosp.y - expHosp.y) < 5,
       pBhosp ? `cash=${pBhosp.cash} hp=${pBhosp.hp} at (${Math.round(pBhosp.x)},${Math.round(pBhosp.y)})` : 'no state');
+    // Verify the revived player is NOT stuck inside the hospital building collider.
+    const hx0 = pBhosp ? pBhosp.x : expHosp.x, hy0 = pBhosp ? pBhosp.y : expHosp.y;
+    for (let i = 1; i <= 6; i++) {
+      roomB.send('move', { seq: 500 + i, dx: 0, dy: 1, sprint: false });
+      await sleep(50);
+    }
+    const hospCanWalk = await waitFor(() => {
+      const p = statePlayer(roomA, roomB.sessionId);
+      return p && p.y - hy0 > 20;
+    }, 2000);
+    check('M4 hospital revive spawn is walkable (not trapped inside building)', hospCanWalk,
+      `y ${Math.round(hy0)} -> ${Math.round((statePlayer(roomA, roomB.sessionId) || {}).y || 0)}`);
+
+    // M4 refuel while dismounted: first top up (the taxi trip drained fuel),
+    // then a 2nd refuel while dismounted at 100% fuel -> ALREADY_FULL.
+    await testSet(roomA, { x: 2895, y: 1800 });
+    roomA.send('vehicle', { action: 'dismount' });
+    await sleep(200);
+    vehicleResultsA.length = 0;
+    roomA.send('vehicle', { action: 'refuel' });
+    await waitForMsg(vehicleResultsA, (m) => m.ok && m.action === 'refuel');
+    vehicleResultsA.length = 0;
+    roomA.send('vehicle', { action: 'refuel' });
+    const fullRefuelBlocked = await waitForMsg(vehicleResultsA,
+      (m) => !m.ok && m.error === 'ALREADY_FULL');
+    check('M4 refuel while dismounted at 100% fuel -> ALREADY_FULL', fullRefuelBlocked);
 
     // 10. Doctor revive + 60 s cooldown (§3.4.3, §14.4).
     // A becomes a doctor (no active order, so the job change is allowed).

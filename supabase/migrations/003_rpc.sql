@@ -26,7 +26,17 @@ create or replace function public.rpc_starter_grant(
 ) returns jsonb as $$
 declare
   v_cash bigint;
+  v_uid uuid;
 begin
+  v_uid := auth.uid();
+  if current_user not in ('postgres', 'service_role') then
+    if v_uid is null then
+      return jsonb_build_object('ok', false, 'error', 'AUTH_REQUIRED');
+    end if;
+    if p_user_id is distinct from v_uid then
+      return jsonb_build_object('ok', false, 'error', 'FORBIDDEN');
+    end if;
+  end if;
   if p_user_id is null then
     return jsonb_build_object('ok', false, 'error', 'AUTH_REQUIRED');
   end if;
@@ -61,7 +71,17 @@ create or replace function public.rpc_shop_buy(
 ) returns jsonb as $$
 declare
   v_price bigint; v_total bigint; v_cash bigint; v_bank bigint;
+  v_uid uuid;
 begin
+  v_uid := auth.uid();
+  if current_user not in ('postgres', 'service_role') then
+    if v_uid is null then
+      return jsonb_build_object('ok', false, 'error', 'AUTH_REQUIRED');
+    end if;
+    if p_user_id is distinct from v_uid then
+      return jsonb_build_object('ok', false, 'error', 'FORBIDDEN');
+    end if;
+  end if;
   if p_user_id is null then
     return jsonb_build_object('ok', false, 'error', 'AUTH_REQUIRED');
   end if;
@@ -109,7 +129,17 @@ create or replace function public.rpc_atm_transfer(
 ) returns jsonb as $$
 declare
   v_cash bigint; v_bank bigint; v_day_total bigint;
+  v_uid uuid;
 begin
+  v_uid := auth.uid();
+  if current_user not in ('postgres', 'service_role') then
+    if v_uid is null then
+      return jsonb_build_object('ok', false, 'error', 'AUTH_REQUIRED');
+    end if;
+    if p_user_id is distinct from v_uid then
+      return jsonb_build_object('ok', false, 'error', 'FORBIDDEN');
+    end if;
+  end if;
   if p_user_id is null then
     return jsonb_build_object('ok', false, 'error', 'AUTH_REQUIRED');
   end if;
@@ -157,3 +187,13 @@ begin
   end if;
 end;
 $$ language plpgsql security definer;
+
+-- Restrict RPC execution: internal _log_tx is server/postgres only;
+-- player RPCs cannot be invoked anonymously.
+revoke all on function public._log_tx(uuid, text, bigint, bigint, uuid, jsonb) from public, anon, authenticated;
+revoke all on function public.rpc_starter_grant(uuid, uuid) from public, anon;
+grant execute on function public.rpc_starter_grant(uuid, uuid) to authenticated, service_role;
+revoke all on function public.rpc_shop_buy(uuid, text, integer, uuid, boolean) from public, anon;
+grant execute on function public.rpc_shop_buy(uuid, text, integer, uuid, boolean) to authenticated, service_role;
+revoke all on function public.rpc_atm_transfer(uuid, text, bigint, uuid) from public, anon;
+grant execute on function public.rpc_atm_transfer(uuid, text, bigint, uuid) to authenticated, service_role;

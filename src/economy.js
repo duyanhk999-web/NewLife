@@ -44,6 +44,9 @@
   };
   var MOUNT_RANGE = 80;
   var riding = ''; // '' | 'bicycle' | 'motorbike' — session-only, not saved
+  var onlineInventory = {}; // online mirror fed from server econ_result / motel_result
+  var onlineAtmDayUsed = 0;
+  var onlineVehiclesState = null; // online mirror fed from main.js vehicle_result status
 
   var state = null;        // playerState object (attached by main.js)
   var clockFn = null;      // () => worldTime minutes
@@ -188,6 +191,11 @@
     var spec = VEHICLES[type];
     if (!spec) return { ok: false, error: 'BAD_VEHICLE' };
     if (isFaintedState()) return { ok: false, error: 'FAINTED' };
+    if (isOnlineNet() && typeof NetClient.sendVehicle === 'function') {
+      if (!nearShowroom()) return { ok: false, error: 'TOO_FAR' };
+      NetClient.sendVehicle('buy', { vehicleId: type });
+      return { ok: true, pending: true };
+    }
     if (wallet.vehicles[type]) return { ok: false, error: 'ALREADY_OWNED' };
     if (!nearShowroom()) return { ok: false, error: 'TOO_FAR' };
     var paid = deductCashBank(spec.price);
@@ -246,6 +254,11 @@
     return { outOfFuel: false, wornOut: false };
   }
   function refuel() {
+    if (isOnlineNet() && typeof NetClient.sendVehicle === 'function') {
+      if (!nearShop()) return { ok: false, error: 'TOO_FAR' };
+      NetClient.sendVehicle('refuel', {});
+      return { ok: true, pending: true };
+    }
     var v = wallet.vehicles.motorbike;
     if (!v) return { ok: false, error: 'NO_VEHICLE' };
     if (!nearShop()) return { ok: false, error: 'TOO_FAR' };
@@ -259,6 +272,11 @@
   }
   function repairBike() {
     // Bicycle repair — ĐỀ XUẤT price (§8.1): 10.000đ.
+    if (isOnlineNet() && typeof NetClient.sendVehicle === 'function') {
+      if (!nearShop()) return { ok: false, error: 'TOO_FAR' };
+      NetClient.sendVehicle('repair', {});
+      return { ok: true, pending: true };
+    }
     var v = wallet.vehicles.bicycle;
     if (!v) return { ok: false, error: 'NO_VEHICLE' };
     if (!nearShop()) return { ok: false, error: 'TOO_FAR' };
@@ -375,6 +393,11 @@
     if (!item) return { ok: false, error: 'ITEM_NOT_FOUND' };
     // M3 (§3.2.3): a fainted player cannot move, work or buy/sell.
     if (isFaintedState()) return { ok: false, error: 'FAINTED' };
+    if (isOnlineNet() && typeof NetClient.sendEconomy === 'function') {
+      if (!nearShop()) return { ok: false, error: 'TOO_FAR' };
+      NetClient.sendEconomy('shop_buy', { item_id: itemId, qty: qty });
+      return { ok: true, pending: true };
+    }
     var requestId = uuid();
     if (wallet.processed.indexOf(requestId) !== -1) return { ok: false, error: 'ALREADY_PROCESSED' };
     var total = priceOf(item) * qty;
@@ -399,15 +422,18 @@
     var requestId = uuid();
     return sb.rpc('rpc_shop_buy', {
       p_user_id: window.DTA_USER_ID || null,
-      p_item_id: itemId, p_qty: qty, p_idempotency_key: requestId
+      p_item_id: itemId, p_qty: qty, p_idempotency_key: requestId,
+      p_is_day: isDay()
     }).then(function (res) {
       if (res.error) { console.warn('[economy] rpc_shop_buy failed, local fallback:', res.error); return buy(itemId, qty); }
       var d = res.data;
       // No Auth yet (window.DTA_USER_ID unset) -> RPC refuses; fall back to
       // local wallet so the game still plays (README §4/§5).
-      if (d && d.error === 'AUTH_REQUIRED') return buy(itemId, qty);
+      if (d && (d.error === 'AUTH_REQUIRED' || d.error === 'FORBIDDEN')) return buy(itemId, qty);
       if (!d || !d.ok) return { ok: false, error: (d && d.error) || 'RPC_FAILED' };
-      wallet.cash = d.new_cash; wallet.inventory[itemId] = (wallet.inventory[itemId] || 0) + qty;
+      if (typeof d.cash === 'number') wallet.cash = d.cash;
+      if (typeof d.bank === 'number') wallet.bank = d.bank;
+      wallet.inventory[itemId] = (wallet.inventory[itemId] || 0) + qty;
       saveWallet(); applyToState();
       return { ok: true, cash: wallet.cash, qty: wallet.inventory[itemId] };
     }).catch(function (err) {
@@ -420,6 +446,10 @@
     var item = ITEMS[itemId];
     if (!item) return { ok: false, error: 'ITEM_NOT_FOUND' };
     if (isFaintedState()) return { ok: false, error: 'FAINTED' };
+    if (isOnlineNet() && typeof NetClient.sendEconomy === 'function') {
+      NetClient.sendEconomy('use_item', { item_id: itemId });
+      return { ok: true, pending: true };
+    }
     if ((wallet.inventory[itemId] || 0) < 1) return { ok: false, error: 'NO_ITEM' };
     if (!state) return { ok: false, error: 'NO_STATE' };
     wallet.inventory[itemId] -= 1;
@@ -433,8 +463,14 @@
   function atm(action, amount) {
     amount = Math.floor(amount);
     if (isFaintedState()) return { ok: false, error: 'FAINTED' };
+    if (action !== 'deposit' && action !== 'withdraw') return { ok: false, error: 'BAD_ACTION' };
     if (!isFinite(amount) || amount < ATM_MIN || amount > ATM_MAX) {
       return { ok: false, error: 'AMOUNT_RANGE', min: ATM_MIN, max: ATM_MAX };
+    }
+    if (isOnlineNet() && typeof NetClient.sendEconomy === 'function') {
+      if (!nearBank()) return { ok: false, error: 'TOO_FAR' };
+      NetClient.sendEconomy('atm_transfer', { action: action, amount: amount });
+      return { ok: true, pending: true };
     }
     if (wallet.atmDay.date !== todayStr()) wallet.atmDay = { date: todayStr(), total: 0 };
     if (wallet.atmDay.total + amount > ATM_DAY_MAX) {
@@ -481,9 +517,17 @@
     node.textContent = text;
     node.style.color = isErr ? '#ff9a9a' : '#a5e08a';
   }
+  function displayCash() { return (isOnlineNet() && state) ? (state.cash || 0) : wallet.cash; }
+  function displayBank() { return (isOnlineNet() && state) ? (state.bank || 0) : wallet.bank; }
+  function displayInv(id) { return (isOnlineNet() ? onlineInventory[id] : wallet.inventory[id]) || 0; }
+  function displayAtmUsed() {
+    if (isOnlineNet()) return onlineAtmDayUsed;
+    if (wallet.atmDay.date !== todayStr()) return 0;
+    return wallet.atmDay.total;
+  }
   function errText(res) {
     switch (res.error) {
-      case 'INSUFFICIENT_FUNDS': return 'Không đủ tiền! Cần ' + fmt(res.need || 0) + ', bạn có ' + fmt(wallet.cash) + ' mặt + ' + fmt(wallet.bank) + ' ngân hàng.';
+      case 'INSUFFICIENT_FUNDS': return 'Không đủ tiền! Cần ' + fmt(res.need || 0) + ', bạn có ' + fmt(displayCash()) + ' mặt + ' + fmt(displayBank()) + ' ngân hàng.';
       case 'ALREADY_PROCESSED': return 'Giao dịch này đã xử lý rồi (chống trùng).';
       case 'AMOUNT_RANGE': return 'Số tiền phải từ ' + fmt(ATM_MIN) + ' tới ' + fmt(ATM_MAX) + ' / lần.';
       case 'DAILY_LIMIT': return 'Đã dùng ' + fmt(res.used || 0) + ' hôm nay, tối đa ' + fmt(ATM_DAY_MAX) + '/ngày.';
@@ -501,6 +545,7 @@
       case 'RENEW_LIMIT': return 'Chỉ được gia hạn trước tối đa 7 ngày.';
       case 'CHEST_LOCKED': return res.state === 'held' ? 'Phòng đã hết hạn — rương bị khóa. Gia hạn phòng để lấy lại đồ (giữ 24h rồi xóa).' : 'Bạn chưa thuê phòng nên không có rương.';
       case 'CHEST_FULL': return 'Rương đã đầy 10 ô.';
+      case 'RATE_LIMITED': return 'Thao tác quá nhanh (tối đa 5 lần/phút) — chờ một chút rồi thử lại.';
       default: return 'Lỗi: ' + (res.error || 'không rõ');
     }
   }
@@ -514,12 +559,13 @@
     // openShopPanel). When far, disable the buttons and say so in-panel
     // instead of silently refusing to open (the old proximity gate).
     var farFromShop = !nearShop();
+    var online = isOnlineNet();
     list.innerHTML = '';
     Object.keys(ITEMS).forEach(function (id) {
       var item = ITEMS[id];
       var row = document.createElement('div');
       row.className = 'shopRow';
-      var have = wallet.inventory[id] || 0;
+      var have = displayInv(id);
       row.innerHTML = '<div class="shopName">' + item.name + ' <span class="shopDesc">' + item.desc + '</span></div>' +
         '<div class="shopPrice">' + fmt(priceOf(item)) + (isDay() && item.dayPrice ? ' <span class="shopSale">giá ngày</span>' : '') + '</div>' +
         '<div class="shopHave">Có: ' + have + '</div>';
@@ -530,11 +576,12 @@
         buyBtn.disabled = true; // double-click guard (idempotency, SRS §4.3)
         var done = function (res) {
           buyBtn.disabled = false;
-          if (res.ok) showMsg(shopMsg, 'Đã mua ' + item.name + ' (' + fmt(res.total || priceOf(item)) + '). Còn ' + fmt(wallet.cash) + '.');
+          if (res.pending) { showMsg(shopMsg, 'Đang gửi yêu cầu mua ' + item.name + '…'); return; }
+          if (res.ok) showMsg(shopMsg, 'Đã mua ' + item.name + ' (' + fmt(res.total || priceOf(item)) + '). Còn ' + fmt(displayCash()) + '.');
           else showMsg(shopMsg, errText(res), true);
           renderShop(); renderAtm();
         };
-        if (mode === 'supabase' && sb) buyAsync(id, 1).then(done);
+        if (!online && mode === 'supabase' && sb) buyAsync(id, 1).then(done);
         else done(buy(id, 1));
       });
       row.appendChild(buyBtn);
@@ -544,6 +591,7 @@
         useBtn.disabled = farFromShop;
         useBtn.addEventListener('click', function () {
           var res = useItem(id);
+          if (res.pending) { showMsg(shopMsg, 'Đang dùng ' + item.name + '…'); return; }
           if (res.ok) showMsg(shopMsg, 'Đã dùng ' + item.name + '! Độ no ' + Math.floor(state.hunger) + ', Thể lực ' + Math.floor(state.stamina) + '.');
           else showMsg(shopMsg, errText(res), true);
           renderShop();
@@ -553,7 +601,8 @@
       list.appendChild(row);
     });
     var walletLine = el('shopWallet');
-    if (walletLine) walletLine.textContent = 'Tiền mặt: ' + fmt(wallet.cash) + '  •  Ngân hàng: ' + fmt(wallet.bank) + (mode === 'local' ? '  •  Chế độ local' : '  •  Supabase');
+    var modeLabel = online ? 'Online (server)' : (mode === 'local' ? 'Chế độ local' : 'Supabase');
+    if (walletLine) walletLine.textContent = 'Tiền mặt: ' + fmt(displayCash()) + '  •  Ngân hàng: ' + fmt(displayBank()) + '  •  ' + modeLabel;
     // Only overwrite the message when far (never wipe a buy-success message
     // — renderShop is called right after a successful buy).
     if (farFromShop) showMsg(shopMsg, 'Bạn đang ở xa Cửa Hàng Tiện Lợi — tới gần điểm cam trên bản đồ để mua / dùng đồ.');
@@ -569,15 +618,20 @@
     if (!list) return;
     list.innerHTML = '';
     var farFromShowroom = !nearShowroom();
-    var vs = getVehicleState();
+    var online = isOnlineNet();
+    var vs = (online && onlineVehiclesState) ? onlineVehiclesState : getVehicleState();
+    var curRiding = online ? ((state && state.vehicleId) || vs.riding || '') : riding;
     Object.keys(VEHICLES).forEach(function (id) {
       var spec = VEHICLES[id];
-      var owned = vs[id].owned;
+      var v = vs[id] || { owned: false };
+      var owned = !!v.owned;
+      var fuelVal = (online && curRiding === id && state && typeof state.fuel === 'number') ? state.fuel : (v.fuel === undefined ? 100 : v.fuel);
+      var durVal = (online && curRiding === id && state && typeof state.durability === 'number') ? state.durability : (v.durability === undefined ? 100 : v.durability);
       var row = document.createElement('div');
       row.className = 'shopRow';
       var status = owned
-        ? (riding === id ? 'Đang đi • ' : 'Đang đỗ • ') +
-          (id === 'motorbike' ? 'Xăng ' + Math.floor(vs[id].fuel) + '%' : 'Độ bền ' + Math.floor(vs[id].durability) + '%')
+        ? (curRiding === id ? 'Đang đi • ' : 'Đang đỗ • ') +
+          (id === 'motorbike' ? 'Xăng ' + Math.floor(fuelVal) + '%' : 'Độ bền ' + Math.floor(durVal) + '%')
         : 'Chưa có';
       row.innerHTML = '<div class="shopName">' + spec.name + ' <span class="shopDesc">' + spec.desc + '</span></div>' +
         '<div class="shopPrice">' + fmt(spec.price) + '</div>' +
@@ -588,16 +642,22 @@
         buyBtn.disabled = farFromShowroom;
         buyBtn.addEventListener('click', function () {
           var res = buyVehicle(id);
+          if (res.pending) { showMsg(shopMsg, 'Đang gửi yêu cầu mua ' + spec.name + '…'); return; }
           if (res.ok) showMsg(shopMsg, 'Đã mua ' + spec.name + ' (' + fmt(spec.price) + '). Xe đang đỗ ở Showroom — tới gần rồi bấm Lên xe (phím E).');
           else showMsg(shopMsg, errText(res), true);
           renderShop(); renderAtm();
         });
         row.appendChild(buyBtn);
       } else {
-        if (riding === id) {
+        if (curRiding === id) {
           var offBtn = document.createElement('button');
           offBtn.className = 'shopBtn useBtn'; offBtn.textContent = 'Xuống xe';
           offBtn.addEventListener('click', function () {
+            if (online && typeof NetClient.sendVehicle === 'function') {
+              NetClient.sendVehicle('dismount', {});
+              showMsg(shopMsg, 'Đang xuống xe…');
+              return;
+            }
             dismountVehicle();
             showMsg(shopMsg, 'Đã xuống xe — xe đỗ tại chỗ này.');
             renderShop();
@@ -607,6 +667,11 @@
           var onBtn = document.createElement('button');
           onBtn.className = 'shopBtn'; onBtn.textContent = 'Lên xe';
           onBtn.addEventListener('click', function () {
+            if (online && typeof NetClient.sendVehicle === 'function') {
+              NetClient.sendVehicle('mount', { vehicleId: id });
+              showMsg(shopMsg, 'Đang lên ' + spec.name + '…');
+              return;
+            }
             var res = mountVehicle(id);
             if (res.ok) showMsg(shopMsg, 'Đã lên ' + spec.name + ' — tốc độ ' + spec.speed + ' px/s.');
             else showMsg(shopMsg, errText(res), true);
@@ -614,24 +679,26 @@
           });
           row.appendChild(onBtn);
         }
-        if (id === 'motorbike' && vs[id].fuel < 100) {
+        if (id === 'motorbike' && fuelVal < 100) {
           var fuelBtn = document.createElement('button');
           fuelBtn.className = 'shopBtn'; fuelBtn.textContent = 'Đổ xăng 5.000đ';
           fuelBtn.disabled = !nearShop();
           fuelBtn.addEventListener('click', function () {
             var res = refuel();
+            if (res.pending) { showMsg(shopMsg, 'Đang đổ xăng…'); return; }
             if (res.ok) showMsg(shopMsg, 'Đã đổ đầy bình xăng (đi được 8.000 px).');
             else showMsg(shopMsg, errText(res), true);
             renderShop(); renderAtm();
           });
           row.appendChild(fuelBtn);
         }
-        if (id === 'bicycle' && vs[id].durability < 100) {
+        if (id === 'bicycle' && durVal < 100) {
           var repBtn = document.createElement('button');
           repBtn.className = 'shopBtn'; repBtn.textContent = 'Sửa xe 10.000đ';
           repBtn.disabled = !nearShop();
           repBtn.addEventListener('click', function () {
             var res = repairBike();
+            if (res.pending) { showMsg(shopMsg, 'Đang sửa xe…'); return; }
             if (res.ok) showMsg(shopMsg, 'Đã sửa xe đạp — độ bền 100%.');
             else showMsg(shopMsg, errText(res), true);
             renderShop(); renderAtm();
@@ -672,7 +739,7 @@
       ? { expiresAt: onlineMotel.expiresAt || 0, chestState: onlineMotel.chestState || (onlineMotel.expiresAt ? 'active' : 'none'), chest: onlineMotel.chest || {} }
       : motelStatus();
     var line = el('motelWallet');
-    if (line) line.textContent = 'Tiền mặt: ' + fmt(wallet.cash) + '  •  Ngân hàng: ' + fmt(wallet.bank);
+    if (line) line.textContent = 'Tiền mặt: ' + fmt(displayCash()) + '  •  Ngân hàng: ' + fmt(displayBank());
     var info = el('motelInfo');
     if (info) {
       if (st.chestState === 'active') {
@@ -688,7 +755,7 @@
     var rentBtn = el('motelRent'), renewBtn = el('motelRenew');
     var far = !nearMotel();
     if (rentBtn) rentBtn.disabled = far || st.chestState === 'active';
-    if (renewBtn) renewBtn.disabled = far || !wallet.motel.expiresAt;
+    if (renewBtn) renewBtn.disabled = far || !st.expiresAt;
     if (far) showMsg(motelMsg, 'Bạn đang ở xa Khu Nhà Trọ — tới gần để thuê / gia hạn phòng.');
     var chestEl = el('motelChest');
     if (chestEl) {
@@ -700,7 +767,7 @@
         if (!item) return;
         var row = document.createElement('div');
         row.className = 'shopRow';
-        row.innerHTML = '<div class="shopName">' + item.name + '</div><div class="shopHave">Trong rương: ' + st.chest[itemId] + ' • Túi: ' + (wallet.inventory[itemId] || 0) + '</div>';
+        row.innerHTML = '<div class="shopName">' + item.name + '</div><div class="shopHave">Trong rương: ' + st.chest[itemId] + ' • Túi: ' + displayInv(itemId) + '</div>';
         var putBtn = document.createElement('button');
         putBtn.className = 'shopBtn'; putBtn.textContent = 'Cất 1';
         putBtn.disabled = st.chestState !== 'active';
@@ -755,7 +822,7 @@
   function renderAtm() {
     if (!atmEl) return;
     var line = el('atmWallet');
-    if (line) line.textContent = 'Tiền mặt: ' + fmt(wallet.cash) + '  •  Ngân hàng: ' + fmt(wallet.bank) + '  •  Đã giao dịch hôm nay: ' + fmt(wallet.atmDay.total) + ' / ' + fmt(ATM_DAY_MAX);
+    if (line) line.textContent = 'Tiền mặt: ' + fmt(displayCash()) + '  •  Ngân hàng: ' + fmt(displayBank()) + '  •  Đã giao dịch hôm nay: ' + fmt(displayAtmUsed()) + ' / ' + fmt(ATM_DAY_MAX);
     // BUG FIX (M2 browser test): same as shop — panel opens from anywhere,
     // but Gửi/Rút are disabled until the player is near the bank.
     var farFromBank = !nearBank();
@@ -844,6 +911,7 @@
     function doAtm(action) {
       var amount = amt ? parseInt(amt.value, 10) : NaN;
       var res = atm(action, amount);
+      if (res.pending) { showMsg(atmMsg, 'Đang gửi yêu cầu ' + (action === 'deposit' ? 'gửi ' : 'rút ') + fmt(amount) + '…'); return; }
       if (res.ok) {
         showMsg(atmMsg, (action === 'deposit' ? 'Đã gửi ' : 'Đã rút ') + fmt(amount) + '.');
         renderAtm(); renderShop();
@@ -878,6 +946,14 @@
     motelRent: motelRent, motelRenew: motelRenew, motelStatus: motelStatus,
     chestPut: chestPut, chestTake: chestTake,
     setOnlineMotelStatus: setOnlineMotelStatus,
+    setOnlineInventory: function (inv) { onlineInventory = inv ? Object.assign({}, inv) : {}; },
+    setOnlineAtmDayUsed: function (n) { onlineAtmDayUsed = n || 0; },
+    setOnlineVehicles: function (vs) { onlineVehiclesState = vs || null; },
+    showOnlineFeedback: function (target, msg, isErr) {
+      var node = target === 'atm' ? atmMsg : (target === 'motel' ? motelMsg : shopMsg);
+      if (node) showMsg(node, msg, isErr);
+    },
+    errText: errText,
     getWallet: function () { return wallet; },
     getMode: function () { return mode; },
     priceOf: priceOf, isDay: isDay,

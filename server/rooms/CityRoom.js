@@ -13,6 +13,7 @@ const stats = require('../stats');
 
 const WALK_SPEED = 180, SPRINT_SPEED = 300;
 const HOSPITAL = { x: 4125, y: 1635 }; // SRS §3.1 POI (== M3.HOSPITAL_POS, Map v2)
+const HOSPITAL_SPAWN = M3.HOSPITAL_SPAWN || { x: 4125, y: 1890 }; // Open ground south of Hospital (never spawn inside collider)
 const GUIDE_POS = { x: 2400, y: 2520 }; // Map v2 (clear of the fountain)
 const SPAWN = { x: 2400, y: 2625 }; // Map v2 plaza south edge
 const CHAT_BUBBLE_MS = 4000;
@@ -380,6 +381,13 @@ class CityRoom extends Room {
     econ.txLog.unshift({ type, amount, at: Date.now(), meta: meta || {} });
     if (econ.txLog.length > 50) econ.txLog.length = 50;
   }
+  _econInventoryObj(econ) {
+    const out = {};
+    if (econ && econ.inventory) {
+      for (const [k, v] of econ.inventory) out[k] = v;
+    }
+    return out;
+  }
   _isDay() {
     const h = Math.floor((this.state.worldTime || 480) / 60) % 24;
     return h >= 6 && h < 18;
@@ -395,7 +403,10 @@ class CityRoom extends Room {
     econ.granted = true;
     player.cash += STARTER_GRANT;
     this._econLog(econ, 'starter_grant', STARTER_GRANT, { once: true });
-    client.send('econ_result', { type: 'starter_grant', ok: true, cash: player.cash, bank: player.bank });
+    client.send('econ_result', {
+      type: 'starter_grant', ok: true, cash: player.cash, bank: player.bank,
+      inventory: this._econInventoryObj(econ),
+    });
   }
   _onShopBuy(client, msg) {
     const ctx = this._econCheck(client, msg, 'shop_buy');
@@ -423,6 +434,7 @@ class CityRoom extends Room {
     client.send('econ_result', {
       type: 'shop_buy', ok: true, cash: player.cash, bank: player.bank,
       item_id: msg.item_id, qty: econ.inventory.get(msg.item_id), total,
+      inventory: this._econInventoryObj(econ),
     });
   }
   _onAtmTransfer(client, msg) {
@@ -462,7 +474,10 @@ class CityRoom extends Room {
     }
     econ.atmDay.total += amount;
     this._econLog(econ, 'atm', action === 'deposit' ? -amount : amount, { action, request_id: requestId });
-    client.send('econ_result', { type: 'atm_transfer', ok: true, cash: player.cash, bank: player.bank, dayUsed: econ.atmDay.total });
+    client.send('econ_result', {
+      type: 'atm_transfer', ok: true, action, amount,
+      cash: player.cash, bank: player.bank, dayUsed: econ.atmDay.total,
+    });
   }
   _onUseItem(client, msg) {
     const ctx = this._econCheck(client, msg, 'use_item');
@@ -483,8 +498,9 @@ class CityRoom extends Room {
     if (item.stamina) player.stamina = Math.min(100, player.stamina + item.stamina);
     this._econLog(econ, 'use_item', 0, { item_id: msg.item_id });
     client.send('econ_result', {
-      type: 'use_item', ok: true, hunger: player.hunger, stamina: player.stamina,
+      type: 'use_item', ok: true, item_id: msg.item_id, hunger: player.hunger, stamina: player.stamina,
       left: econ.inventory.get(msg.item_id), cash: player.cash, bank: player.bank,
+      inventory: this._econInventoryObj(econ),
     });
   }
 
@@ -519,8 +535,10 @@ class CityRoom extends Room {
     data.moveTimes.push(now);
 
     // 2. Speed check: displacement the server itself integrates can never
-    // exceed maxSpeed * dt; a dt anomaly is still treated as a violation.
-    const dt = clamp((now - data.lastMoveAt) / 1000, 0, 0.5);
+    // exceed maxSpeed * dt; if the client was idle (no move for >250 ms),
+    // treat the first step as one 50 ms frame instead of jumping 0.5 s.
+    const rawDt = (now - data.lastMoveAt) / 1000;
+    const dt = rawDt > 0.25 ? 0.05 : clamp(rawDt, 0, 0.25);
     data.lastMoveAt = now;
 
     // 3. Stamina: sprint blocked below 10 (fall back to walk). Sprint is
@@ -855,7 +873,7 @@ class CityRoom extends Room {
     player.cash = after.cash; player.bank = after.bank;
     const econ = this.economy.get(player.id);
     if (econ) this._econLog(econ, 'hospital_fee', -after.paid, { fee, cash_after: after.cash });
-    player.x = HOSPITAL.x; player.y = HOSPITAL.y;
+    player.x = HOSPITAL_SPAWN.x; player.y = HOSPITAL_SPAWN.y;
     player.hp = 50; player.stamina = 50; player.isFainted = false; player.anim = 'idle';
     if (sv) { sv.faintedUntil = 0; sv.faintedAt = 0; }
     console.log(`[city] ${player.name} hospital revive (fee ${after.paid}đ, cash now ${player.cash}, bank ${player.bank})`);
@@ -947,7 +965,8 @@ class CityRoom extends Room {
       if (dist(player.x, player.y, SHOP_POS.x, SHOP_POS.y) > ECON_RANGE) {
         send({ ok: false, error: 'TOO_FAR' }); return;
       }
-      if (player.fuel >= 100 && player.vehicleId === 'motorbike') {
+      const curFuel = player.vehicleId === 'motorbike' ? player.fuel : veh.motorbike.fuel;
+      if (curFuel >= 100) {
         send({ ok: false, error: 'ALREADY_FULL' }); return;
       }
       const paid = this._deductCashBank(player, M3.FUEL_PRICE);
@@ -965,7 +984,8 @@ class CityRoom extends Room {
       if (dist(player.x, player.y, SHOP_POS.x, SHOP_POS.y) > ECON_RANGE) {
         send({ ok: false, error: 'TOO_FAR' }); return;
       }
-      if (player.durability >= 100 && player.vehicleId === 'bicycle') {
+      const curDur = player.vehicleId === 'bicycle' ? player.durability : veh.bicycle.durability;
+      if (curDur >= 100) {
         send({ ok: false, error: 'ALREADY_FULL' }); return;
       }
       const paid = this._deductCashBank(player, M3.BIKE_REPAIR_PRICE);
@@ -1340,7 +1360,7 @@ class CityRoom extends Room {
       }
       const chest = {};
       for (const [k, v] of room.chest) chest[k] = v;
-      send({ ok: true, action, itemId, qty, chest });
+      send({ ok: true, action, itemId, qty, chest, inventory: this._econInventoryObj(econ) });
       return;
     }
 
@@ -1352,6 +1372,7 @@ class CityRoom extends Room {
         expiresAt: room ? room.expiresAt : 0,
         chestState: room ? M3.motelChestState(room.expiresAt, now) : 'none',
         chest,
+        inventory: this._econInventoryObj(econ),
         cash: player.cash, bank: player.bank,
       });
       return;
@@ -1414,10 +1435,13 @@ class CityRoom extends Room {
       return;
     }
     const jobEntry = this.jobs.get(client.sessionId);
-    // Cannot abandon Shipper mid-order: finish / cancel it first (§6.2:
-    // max 1 order, and the order belongs to the Shipper job).
+    // Cannot abandon Shipper mid-order or Taxi mid-ride.
     if (jobEntry && jobEntry.order && job !== 'shipper') {
       client.send('job_result', { type: 'job', ok: false, error: 'ACTIVE_ORDER' });
+      return;
+    }
+    if (job !== 'taxi_driver' && this.taxiRides.has(client.sessionId)) {
+      client.send('job_result', { type: 'job', ok: false, error: 'ACTIVE_RIDE' });
       return;
     }
     // M4: leaving the taxi_driver job turns "Nhận khách" off.

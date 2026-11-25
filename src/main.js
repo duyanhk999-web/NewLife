@@ -1982,8 +1982,8 @@
     var ox = playerState.x, oy = playerState.y;
     var nx = playerState.x + input.dx * speed * dt;
     var ny = playerState.y + input.dy * speed * dt;
-    if (tryMove(nx, playerState.y, 14)) playerState.x = nx;
-    if (tryMove(playerState.x, ny, 14)) playerState.y = ny;
+    if (tryMove(nx, playerState.y, 16)) playerState.x = nx;
+    if (tryMove(playerState.x, ny, 16)) playerState.y = ny;
     playerState.x = Math.max(20, Math.min(MAP_W - 20, playerState.x));
     playerState.y = Math.max(20, Math.min(MAP_H - 20, playerState.y));
     // M4 (§8.1, offline): drain fuel/durability by distance travelled.
@@ -2093,7 +2093,8 @@
       playerState.bank -= fromBank;
       res = { fee: fee, paid: fromCash + fromBank };
     }
-    playerState.x = 4125; playerState.y = 1635; // Bệnh Viện POI (Map v2)
+    var hSpawn = (typeof M3 !== 'undefined' && M3.HOSPITAL_SPAWN) ? M3.HOSPITAL_SPAWN : { x: 4125, y: 1890 };
+    playerState.x = hSpawn.x; playerState.y = hSpawn.y; // Open ground south of Bệnh Viện (Map v2)
     playerState.hp = 50; playerState.stamina = 50;
     playerState.isFainted = false; playerState.anim = 'idle';
     faintInfo = null;
@@ -2880,6 +2881,7 @@
             sfx('jobPick');
           } else {
             var why = msg.error === 'ACTIVE_ORDER' ? 'Đang có đơn Shipper — giao xong / hủy rồi mới đổi nghề.'
+              : msg.error === 'ACTIVE_RIDE' ? 'Đang chở khách Taxi — trả khách xong rồi mới đổi nghề.'
               : 'Không đổi được nghề: ' + (msg.error || 'lỗi không rõ');
             appendChatLog('', '', why, true);
           }
@@ -2979,33 +2981,51 @@
             bicycle: msg.vehicles.bicycle || { owned: false },
             motorbike: msg.vehicles.motorbike || { owned: false },
           };
+          if (typeof Economy !== 'undefined' && Economy.setOnlineVehicles) Economy.setOnlineVehicles(onlineVehicles);
         } else if (msg.ok && msg.action === 'buy') {
           var bought = msg.vehicleId === 'motorbike' ? 'xe máy' : 'xe đạp';
-          appendChatLog('', '', 'Đã mua ' + bought + ' (' + Math.floor(msg.price).toLocaleString('vi-VN') + 'đ). Xe đang đỗ ở Showroom — tới gần rồi bấm Lên xe (phím E).', true);
+          var buyMsg = 'Đã mua ' + bought + ' (' + Math.floor(msg.price).toLocaleString('vi-VN') + 'đ). Xe đang đỗ ở Showroom — tới gần rồi bấm Lên xe (phím E).';
+          appendChatLog('', '', buyMsg, true);
+          if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('shop', buyMsg, false);
           sfx('deliver');
           if (typeof NetClient !== 'undefined' && NetClient.sendVehicle) NetClient.sendVehicle('status', {});
         } else if (msg.ok && msg.action === 'mount') {
+          onlineVehicles.riding = msg.vehicleId || '';
+          if (typeof Economy !== 'undefined' && Economy.setOnlineVehicles) Economy.setOnlineVehicles(onlineVehicles);
           appendChatLog('', '', 'Đã lên ' + (msg.vehicleId === 'motorbike' ? 'xe máy (324 px/s)' : 'xe đạp (234 px/s)') + '.', true);
           sfx('accept');
+          if (typeof NetClient !== 'undefined' && NetClient.sendVehicle) NetClient.sendVehicle('status', {});
         } else if (msg.ok && msg.action === 'dismount') {
+          onlineVehicles.riding = '';
+          if (typeof Economy !== 'undefined' && Economy.setOnlineVehicles) Economy.setOnlineVehicles(onlineVehicles);
           appendChatLog('', '', 'Đã xuống xe — xe đỗ tại chỗ này.', true);
           sfx('click');
+          if (typeof NetClient !== 'undefined' && NetClient.sendVehicle) NetClient.sendVehicle('status', {});
         } else if (msg.ok && msg.action === 'refuel') {
-          appendChatLog('', '', 'Đã đổ đầy bình xăng (đi được 8.000 px).', true);
+          var fuelMsg = 'Đã đổ đầy bình xăng (đi được 8.000 px).';
+          appendChatLog('', '', fuelMsg, true);
+          if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('shop', fuelMsg, false);
           sfx('deliver');
+          if (typeof NetClient !== 'undefined' && NetClient.sendVehicle) NetClient.sendVehicle('status', {});
         } else if (msg.ok && msg.action === 'repair') {
-          appendChatLog('', '', 'Đã sửa xe đạp — độ bền 100%.', true);
+          var repMsg = 'Đã sửa xe đạp — độ bền 100%.';
+          appendChatLog('', '', repMsg, true);
+          if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('shop', repMsg, false);
           sfx('deliver');
+          if (typeof NetClient !== 'undefined' && NetClient.sendVehicle) NetClient.sendVehicle('status', {});
         } else if (msg.ok && (msg.action === 'out_of_fuel' || msg.action === 'worn_out')) {
           appendChatLog('', '', msg.message || 'Xe không chạy được nữa.', true);
           sfx('expire');
+          if (typeof NetClient !== 'undefined' && NetClient.sendVehicle) NetClient.sendVehicle('status', {});
         } else if (!msg.ok) {
           var why = msg.error === 'TOO_FAR' && msg.x !== undefined
             ? 'Xe đang đỗ ở (' + Math.round(msg.x) + ', ' + Math.round(msg.y) + ') — tới gần trong 80 px rồi lên xe.'
             : (typeof Jobs !== 'undefined' && Jobs.jobErrText ? Jobs.jobErrText(msg) : 'Xe lỗi: ' + (msg.error || 'không rõ'));
           appendChatLog('', '', why, true);
+          if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('shop', why, true);
           sfx('error');
         }
+        if (typeof Economy !== 'undefined' && Economy.renderShop) Economy.renderShop();
         if (typeof Jobs !== 'undefined' && Jobs.render) Jobs.render();
       },
       // M4: taxi results (toggle / invite / accept / pickup / dropoff /
@@ -3060,12 +3080,15 @@
         if (!msg) return;
         if (typeof msg.cash === 'number') playerState.cash = msg.cash;
         if (typeof msg.bank === 'number') playerState.bank = msg.bank;
+        if (msg.inventory && typeof Economy !== 'undefined' && Economy.setOnlineInventory) {
+          Economy.setOnlineInventory(msg.inventory);
+        }
         if (msg.ok && (msg.action === 'rent' || msg.action === 'renew')) {
           appendChatLog('', '', (msg.action === 'rent' ? 'Đã thuê phòng trọ 50.000đ / 24h' : 'Đã gia hạn phòng trọ') +
             ' — hết hạn ' + new Date(msg.expiresAt).toLocaleString('vi-VN') + '. Điểm hồi sinh của bạn là phòng trọ.', true);
           sfx('deliver');
           if (typeof Economy !== 'undefined' && Economy.setOnlineMotelStatus) {
-            Economy.setOnlineMotelStatus({ expiresAt: msg.expiresAt, chest: {} });
+            Economy.setOnlineMotelStatus({ expiresAt: msg.expiresAt, chestState: 'active' });
           }
         } else if (msg.ok && msg.action === 'status') {
           if (typeof Economy !== 'undefined' && Economy.setOnlineMotelStatus) {
@@ -3081,6 +3104,7 @@
           sfx('error');
         }
         if (typeof Economy !== 'undefined' && Economy.renderMotel) Economy.renderMotel();
+        if (typeof Economy !== 'undefined' && Economy.renderShop) Economy.renderShop();
       },
       onWorldTime: function (minutes) {
         if (netMode !== 'online') return;
@@ -3093,12 +3117,48 @@
       // M2: server economy results (starter_grant / shop_buy / atm_transfer /
       // use_item). Server is authoritative for cash/bank when online.
       onEconResult: function (msg) {
-        if (!msg || !msg.ok) return;
+        if (!msg) return;
         if (typeof msg.cash === 'number') playerState.cash = msg.cash;
         if (typeof msg.bank === 'number') playerState.bank = msg.bank;
-        if (msg.type === 'use_item') {
-          if (typeof msg.hunger === 'number') playerState.hunger = msg.hunger;
-          if (typeof msg.stamina === 'number') playerState.stamina = msg.stamina;
+        if (msg.inventory && typeof Economy !== 'undefined' && Economy.setOnlineInventory) {
+          Economy.setOnlineInventory(msg.inventory);
+        }
+        if (typeof msg.dayUsed === 'number' && typeof Economy !== 'undefined' && Economy.setOnlineAtmDayUsed) {
+          Economy.setOnlineAtmDayUsed(msg.dayUsed);
+        }
+        if (msg.ok) {
+          if (msg.type === 'shop_buy') {
+            var itemName = (typeof Economy !== 'undefined' && Economy.ITEMS && Economy.ITEMS[msg.item_id])
+              ? Economy.ITEMS[msg.item_id].name : msg.item_id;
+            var buyTxt = 'Đã mua ' + itemName + ' (' + Math.floor(msg.total || 0).toLocaleString('vi-VN') + 'đ). Còn ' + Math.floor(playerState.cash).toLocaleString('vi-VN') + 'đ.';
+            if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('shop', buyTxt, false);
+            sfx('click');
+          } else if (msg.type === 'use_item') {
+            if (typeof msg.hunger === 'number') playerState.hunger = msg.hunger;
+            if (typeof msg.stamina === 'number') playerState.stamina = msg.stamina;
+            var useName = (typeof Economy !== 'undefined' && Economy.ITEMS && Economy.ITEMS[msg.item_id])
+              ? Economy.ITEMS[msg.item_id].name : 'vật phẩm';
+            var useTxt = 'Đã dùng ' + useName + '! Độ no ' + Math.floor(playerState.hunger) + ', Thể lực ' + Math.floor(playerState.stamina) + '.';
+            if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('shop', useTxt, false);
+            sfx('click');
+          } else if (msg.type === 'atm_transfer') {
+            var atmTxt = (msg.action === 'deposit' ? 'Đã gửi ' : 'Đã rút ') + Math.floor(msg.amount || 0).toLocaleString('vi-VN') + 'đ.';
+            if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) Economy.showOnlineFeedback('atm', atmTxt, false);
+            sfx('click');
+          }
+        } else {
+          if (msg.error !== 'ALREADY_GRANTED') {
+            var errMsg = (typeof Economy !== 'undefined' && Economy.errText) ? Economy.errText(msg) : ('Lỗi: ' + (msg.error || 'không rõ'));
+            if (typeof Economy !== 'undefined' && Economy.showOnlineFeedback) {
+              Economy.showOnlineFeedback(msg.type === 'atm_transfer' ? 'atm' : 'shop', errMsg, true);
+            }
+            appendChatLog('', '', errMsg, true);
+            sfx('error');
+          }
+        }
+        if (typeof Economy !== 'undefined') {
+          if (Economy.renderShop) Economy.renderShop();
+          if (Economy.renderAtm) Economy.renderAtm();
         }
       },
       onSnapshot: function (snap) {
@@ -3135,6 +3195,7 @@
         // VEHICLES FIX (2026-11-25): re-ask the owned-vehicle status so a
         // returning player's parked bike renders after a reconnect.
         if (typeof NetClient.sendVehicle === 'function') NetClient.sendVehicle('status', {});
+        if (typeof NetClient.sendMotel === 'function') NetClient.sendMotel('status', {});
       },
       onReconnectFailed: function () {
         goOffline('reconnect-timeout-30s');
@@ -3160,6 +3221,7 @@
       // (status was only requested after a buy, so onlineVehicles stayed
       // {owned:false} and syncParkedVehicles showed nothing).
       if (typeof NetClient.sendVehicle === 'function') NetClient.sendVehicle('status', {});
+      if (typeof NetClient.sendMotel === 'function') NetClient.sendMotel('status', {});
     }).catch(function (err) {
       console.warn('[net] init failed:', err);
       goOffline('error');
