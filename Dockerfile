@@ -7,6 +7,7 @@ RUN cd server && npm ci --omit=dev
 
 COPY server ./server
 COPY shared ./shared
+COPY supabase ./supabase
 
 WORKDIR /app/server
 ENV NODE_ENV=production

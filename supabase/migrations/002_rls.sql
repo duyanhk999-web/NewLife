@@ -16,10 +16,13 @@ alter table public.game_items enable row level security;
 
 -- profiles: read own, update own (display_name/avatar_key only — enforced
 -- by the trigger below, which reverts any cash/bank change from a client).
+drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own" on public.profiles
   for select using (auth.uid() = user_id);
+drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own" on public.profiles
   for insert with check (auth.uid() = user_id);
+drop policy if exists "profiles_update_own" on public.profiles;
 create policy "profiles_update_own" on public.profiles
   for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
@@ -45,19 +48,26 @@ create trigger trg_block_client_money before update on public.profiles
 
 -- inventory / assets / tx log / jobs / missions / sessions: read own only,
 -- no client writes at all (server RPCs write with service_role).
+drop policy if exists "inventory_select_own" on public.inventory;
 create policy "inventory_select_own" on public.inventory
   for select using (auth.uid() = user_id);
+drop policy if exists "assets_select_own" on public.assets;
 create policy "assets_select_own" on public.assets
   for select using (auth.uid() = user_id);
+drop policy if exists "tx_select_own" on public.transaction_logs;
 create policy "tx_select_own" on public.transaction_logs
   for select using (auth.uid() = user_id);
+drop policy if exists "jobs_select_own" on public.player_jobs;
 create policy "jobs_select_own" on public.player_jobs
   for select using (auth.uid() = user_id);
+drop policy if exists "missions_select_own" on public.player_missions;
 create policy "missions_select_own" on public.player_missions
   for select using (auth.uid() = user_id);
+drop policy if exists "sessions_select_own" on public.player_sessions;
 create policy "sessions_select_own" on public.player_sessions
   for select using (auth.uid() = user_id);
 
 -- game_items: public read (price list), no client writes.
+drop policy if exists "items_select_all" on public.game_items;
 create policy "items_select_all" on public.game_items
   for select using (is_active = true);

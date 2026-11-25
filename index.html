@@ -180,6 +180,31 @@
   #chatInput::placeholder { color: #999; }
   #chatSend { background: #27ae60; color: #fff; border: none; font-size: 14px; font-weight: bold;
     padding: 0 14px; cursor: pointer; }
+  /* --- M5 Auth modal + start-screen account chip --- */
+  #authChip { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 12;
+    display: none; align-items: center; gap: 8px; background: rgba(10,18,28,0.88);
+    border: 1px solid rgba(255,255,255,0.25); border-radius: 999px; color: #fff;
+    font-family: sans-serif; font-size: 12px; padding: 5px 12px; white-space: nowrap; }
+  #authChip button { background: #2980b9; color: #fff; border: none; border-radius: 999px;
+    font-size: 11px; font-weight: bold; padding: 3px 9px; cursor: pointer; }
+  #authModal { position: fixed; inset: 0; z-index: 15; display: none; align-items: center;
+    justify-content: center; background: rgba(0,0,0,0.68); font-family: sans-serif; padding: 16px; }
+  #authModal.open { display: flex; }
+  #authCard { width: min(360px, 100%); background: rgba(12,22,34,0.97);
+    border: 2px solid #2ecc71; border-radius: 14px; padding: 18px; color: #fff; box-sizing: border-box; }
+  #authCard h3 { margin: 0 0 6px; font-size: 18px; color: #ffe082; }
+  #authCard .sub { font-size: 12px; color: #bbb; margin-bottom: 12px; line-height: 1.4; }
+  #authCard input { width: 100%; box-sizing: border-box; margin: 6px 0; padding: 10px 12px;
+    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 8px; color: #fff; font-size: 14px; outline: none; font-family: sans-serif; }
+  #authCard .authBtns { display: flex; gap: 8px; margin-top: 10px; }
+  #authCard .authBtns button { flex: 1; padding: 10px; border: none; border-radius: 8px;
+    font-size: 14px; font-weight: bold; color: #fff; cursor: pointer; }
+  #authLogin { background: #27ae60; }
+  #authSignup { background: #2980b9; }
+  #authGuest { width: 100%; margin-top: 8px; padding: 9px; border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 8px; background: transparent; color: #ccc; font-size: 13px; cursor: pointer; }
+  #authMsg { font-size: 12px; min-height: 16px; margin-top: 8px; color: #ff9a9a; line-height: 1.4; }
 </style>
 </head>
 <body>
@@ -188,6 +213,22 @@
   <p>Cần mạng để tải PixiJS v8 từ CDN jsDelivr.<br>Kiểm tra mạng rồi tải lại trang.</p>
 </div>
 <div id="netStatus">Đang kết nối…</div>
+<div id="authChip"><span id="authChipText"></span><button id="authChipBtn" type="button">Tài khoản</button></div>
+<div id="authModal">
+  <div id="authCard">
+    <h3>Cuộc Sống Ảo — Tài khoản</h3>
+    <div class="sub">Đăng nhập để lưu tiền, xe cộ, túi đồ và nhà trọ lên máy chủ. Chưa có tài khoản? Nhập tên, email, mật khẩu rồi bấm Đăng ký.</div>
+    <input id="authName" type="text" maxlength="24" placeholder="Tên nhân vật (khi đăng ký)" autocomplete="nickname">
+    <input id="authEmail" type="email" placeholder="Email" autocomplete="email">
+    <input id="authPass" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="current-password">
+    <div class="authBtns">
+      <button id="authLogin" type="button">Đăng nhập</button>
+      <button id="authSignup" type="button">Đăng ký</button>
+    </div>
+    <button id="authGuest" type="button">Chơi Khách (không lưu tiến trình)</button>
+    <div id="authMsg"></div>
+  </div>
+</div>
 <button id="chatBtn" type="button">CHAT</button>
 <button id="shopBtn" type="button">SHOP</button>
 <button id="atmBtn" type="button">ATM</button>

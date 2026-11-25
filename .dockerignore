@@ -4,6 +4,5 @@ server/node_modules
 assets
 docs
 test
-supabase
 *.log
 .env

@@ -10,10 +10,12 @@ const BotBrain = require('../../shared/botBrain');
 const M3 = require('../../shared/m3');
 const { randomUUID } = require('crypto');
 const stats = require('../stats');
+const sb = require('../supabase');
 
 const WALK_SPEED = 180, SPRINT_SPEED = 300;
 const HOSPITAL = { x: 4125, y: 1635 }; // SRS §3.1 POI (== M3.HOSPITAL_POS, Map v2)
 const HOSPITAL_SPAWN = M3.HOSPITAL_SPAWN || { x: 4125, y: 1890 }; // Open ground south of Hospital (never spawn inside collider)
+const MOTEL_SPAWN = M3.MOTEL_SPAWN || { x: 2910, y: 3100 }; // Open ground south of Motel (never spawn inside collider)
 const GUIDE_POS = { x: 2400, y: 2520 }; // Map v2 (clear of the fountain)
 const SPAWN = { x: 2400, y: 2625 }; // Map v2 plaza south edge
 const CHAT_BUBBLE_MS = 4000;
@@ -133,8 +135,11 @@ class CityRoom extends Room {
     this.taxiCustomers = new Map(); // npcId -> {destX, destY, poiName, spawnedAt}
     this.taxiCustomerSeq = 0;
     // M3: orders held when a player disconnects mid-order (§6.2: 30 s to
-    // reconnect, then EXPIRED). sessionId -> {order, leftAt}.
+    // reconnect, then EXPIRED). key -> {order, leftAt}.
     this.heldOrders = new Map();
+    // M5: debounced Supabase persistence timers per sessionId.
+    this._persistTimers = new Map();
+    this._saveTickAcc = 0;
 
     this._spawnBots();
     this._spawnNpcs();
@@ -149,6 +154,10 @@ class CityRoom extends Room {
     clearInterval(this._tickTimer);
     for (const t of this.pendingBotReplies) clearTimeout(t);
     this.pendingBotReplies.clear();
+    if (this._persistTimers) {
+      for (const t of this._persistTimers.values()) clearTimeout(t);
+      this._persistTimers.clear();
+    }
     stats.rooms -= 1;
   }
 
@@ -207,47 +216,135 @@ class CityRoom extends Room {
   }
 
   // ---------------------------------------------------------------- join/leave
-  onJoin(client, options = {}) {
+  async onAuth(client, options = {}) {
+    if (!sb.isConfigured()) {
+      return { userId: null, isGuest: true };
+    }
+    const token = options && typeof options.accessToken === 'string' ? options.accessToken.trim() : '';
+    if (!token) {
+      return { userId: null, isGuest: true };
+    }
+    const { user, error } = await sb.verifyToken(token);
+    if (error || !user) {
+      throw new Error('AUTH_INVALID: ' + (error || 'unauthorized'));
+    }
+    return { userId: user.id, email: user.email || null, isGuest: false };
+  }
+
+  async onJoin(client, options = {}, auth = {}) {
+    const userId = (auth && auth.userId) ? auth.userId : null;
+    // Kick any stale active session for the same userId before loading state.
+    if (userId) {
+      for (const c of this.clients) {
+        if (c.sessionId === client.sessionId) continue;
+        const d = this.clientData.get(c.sessionId);
+        if (d && d.userId === userId) {
+          await this._persistNow(c.sessionId);
+          try { c.leave(4001); } catch (e) { /* ignore */ }
+        }
+      }
+    }
+
     const p = new PlayerState();
-    const spawn = randomOpenPointNearSpawn(200);
-    const name = (typeof options.name === 'string' && options.name.trim())
+    let spawn = randomOpenPointNearSpawn(200);
+    let name = (typeof options.name === 'string' && options.name.trim())
       ? options.name.trim().slice(0, 24) : 'CongDan-' + client.sessionId.slice(0, 4);
-    const avatar = (typeof options.avatar === 'string' && options.avatar.trim())
+    let avatar = (typeof options.avatar === 'string' && options.avatar.trim())
       ? options.avatar.trim().slice(0, 24) : 'hero';
+
+    let cash = 0, bank = 0, job = 'unemployed', hp = 100, hunger = 100, stamina = 100;
+    let invMap = new Map();
+    let vehObj = { bicycle: null, motorbike: null };
+    let motelObj = null;
+    let granted = false;
+    let atmToday = 0;
+
+    if (userId && sb.isConfigured()) {
+      try {
+        const loaded = await sb.loadPlayerState(userId, name, avatar);
+        if (loaded && loaded.profile) {
+          const prof = loaded.profile;
+          if (!options.name && prof.display_name) name = String(prof.display_name).slice(0, 24);
+          if (!options.avatar && prof.avatar_key) avatar = String(prof.avatar_key).slice(0, 24);
+          cash = Math.max(0, Number(prof.cash) || 0);
+          bank = Math.max(0, Number(prof.bank) || 0);
+          job = M3.JOBS.includes(prof.job) ? prof.job : 'unemployed';
+          hp = clamp(Number(prof.hp ?? 100), 0, 100);
+          hunger = clamp(Number(prof.hunger ?? 100), 0, 100);
+          stamina = clamp(Number(prof.stamina ?? 100), 0, 100);
+          invMap = loaded.inventory || new Map();
+          vehObj = loaded.vehicles || { bicycle: null, motorbike: null };
+          motelObj = loaded.motel || null;
+          if (motelObj && M3.motelChestState(motelObj.expiresAt, Date.now()) === 'deleted') {
+            motelObj.chest.clear();
+          }
+          granted = !!loaded.granted;
+          atmToday = Number(loaded.atmToday) || 0;
+
+          const hasActiveMotel = !!(motelObj && M3.motelIsActive(motelObj.expiresAt, Date.now()));
+          if (hp <= 0) {
+            hp = 50; stamina = 50;
+            spawn = hasActiveMotel ? { x: MOTEL_SPAWN.x, y: MOTEL_SPAWN.y } : { x: HOSPITAL_SPAWN.x, y: HOSPITAL_SPAWN.y };
+          } else if (typeof prof.x === 'number' && typeof prof.y === 'number' && !blocked(prof.x, prof.y, 16)) {
+            spawn = { x: clamp(prof.x, 20, 4780), y: clamp(prof.y, 20, 4780) };
+          } else if (hasActiveMotel) {
+            spawn = { x: MOTEL_SPAWN.x, y: MOTEL_SPAWN.y };
+          }
+        }
+      } catch (err) {
+        console.error('[city] supabase loadPlayerState failed:', err && err.message ? err.message : err);
+      }
+    }
+
     Object.assign(p, {
       id: client.sessionId, name, x: spawn.x, y: spawn.y, vx: 0, vy: 0,
-      anim: 'idle', job: 'unemployed', hp: 100, hunger: 100, stamina: 100,
-      cash: 0, bank: 0, // M2 (SRS §4.5/§5.1): profile starts Cash = 0; the
-      // 80.000đ starter grant is applied once via starter_grant below
-      // (client local / Supabase rpc_starter_grant when connected)
+      anim: 'idle', job, hp, hunger, stamina,
+      cash, bank,
       isFainted: false, vehicleId: '', vehicleType: '', fuel: 100,
-      durability: 100, passengerId: '', roomExpiresAt: 0,
+      durability: 100, passengerId: '', roomExpiresAt: motelObj ? motelObj.expiresAt : 0,
       chatBubble: '', chatBubbleUntil: 0, avatar,
       orderStatus: 'none', orderId: '', orderX: 0, orderY: 0, orderDeadline: 0, orderReward: 0,
       orderPickupX: 0, orderPickupY: 0, orderPickupName: '',
     });
     this.state.players.set(client.sessionId, p);
     this.clientData.set(client.sessionId, {
-      isBot: false, lastSeq: 0, moveTimes: [], violations: [],
+      isBot: false, userId, lastSeq: 0, moveTimes: [], violations: [],
       lastMoveAt: Date.now(), chatTimes: [], econTimes: [], sprinting: false,
     });
-    this.economy.set(client.sessionId, {
-      inventory: new Map(), txLog: [], processed: new Set(), granted: false,
-      atmDay: { date: todayStr(), total: 0 },
-    });
+    const econEntry = {
+      userId, sessionId: client.sessionId,
+      inventory: invMap, txLog: [], processed: new Set(), granted,
+      atmDay: { date: todayStr(), total: atmToday },
+    };
+    this.economy.set(client.sessionId, econEntry);
     this.survival.set(client.sessionId, { hungerAcc: 0, hpLossAcc: 0, regenAcc: 0, faintedUntil: 0, faintedAt: 0 });
-    this.jobs.set(client.sessionId, {
+    const jobEntry = {
       order: null, cancelCooldownUntil: 0, completedOrderIds: new Set(),
       doctor: { lastRewardedAt: 0, revives: [] },
-    });
-    this.vehicles.set(client.sessionId, { bicycle: null, motorbike: null });
+    };
+    // M5: restore held Shipper order if reconnecting within 30 s.
+    if (userId && this.heldOrders.has(userId)) {
+      const held = this.heldOrders.get(userId);
+      this.heldOrders.delete(userId);
+      if (held && held.order && Date.now() <= held.order.deadlineAt) {
+        held.order.userId = client.sessionId;
+        jobEntry.order = held.order;
+        this._syncOrderState(p, held.order);
+      } else if (held && held.order) {
+        this._releaseOrderSlot(held.order);
+      }
+    }
+    this.jobs.set(client.sessionId, jobEntry);
+    this.vehicles.set(client.sessionId, vehObj);
+    if (motelObj) this.motel.set(client.sessionId, motelObj);
     stats.humanPlayers += 1;
-    console.log(`[city] join ${p.name} (${client.sessionId}) players=${stats.humanPlayers}`);
+    console.log(`[city] join ${p.name} (${client.sessionId}${userId ? ' uid=' + userId.slice(0, 8) : ' guest'}) players=${stats.humanPlayers}`);
 
     this.onMessage('move', (c, msg) => this._onMove(c, msg));
     this.onMessage('chat', (c, msg) => this._onChat(c, msg));
     this.onMessage('interact', (c, msg) => this._onInteract(c, msg));
     // M2 economy messages (validated server-side; see _onShopBuy etc.)
+    this.onMessage('econ_sync', (c) => this._onEconSync(c));
     this.onMessage('starter_grant', (c, msg) => this._onStarterGrant(c, msg));
     this.onMessage('shop_buy', (c, msg) => this._onShopBuy(c, msg));
     this.onMessage('atm_transfer', (c, msg) => this._onAtmTransfer(c, msg));
@@ -294,7 +391,7 @@ class CityRoom extends Room {
     console.log(`[city] __test_set ${player.name}: hp=${player.hp} hunger=${player.hunger} cash=${player.cash}`);
   }
 
-  onLeave(client, consented) {
+  async onLeave(client, consented) {
     // M4: end any taxi ride involving the leaver — a passenger who leaves
     // strands the driver (no fare: the trip never finished), a driver who
     // leaves strands the passenger. The vehicle stays parked where the
@@ -323,10 +420,17 @@ class CityRoom extends Room {
       veh[player.vehicleId].fuel = player.fuel;
       veh[player.vehicleId].durability = player.durability;
     }
+    const data = this.clientData.get(client.sessionId);
+    const heldKey = (data && data.userId) ? data.userId : client.sessionId;
     // A held order (if any) survives the disconnect so it can be resumed.
     const job = this.jobs.get(client.sessionId);
     if (job && job.order) {
-      this.heldOrders.set(client.sessionId, { order: job.order, leftAt: Date.now() });
+      this.heldOrders.set(heldKey, { order: job.order, leftAt: Date.now() });
+    }
+    await this._persistNow(client.sessionId);
+    if (this._persistTimers && this._persistTimers.has(client.sessionId)) {
+      clearTimeout(this._persistTimers.get(client.sessionId));
+      this._persistTimers.delete(client.sessionId);
     }
     this.state.players.delete(client.sessionId);
     this.clientData.delete(client.sessionId);
@@ -337,6 +441,47 @@ class CityRoom extends Room {
     this.motel.delete(client.sessionId);
     stats.humanPlayers = Math.max(0, stats.humanPlayers - 1);
     console.log(`[city] leave ${client.sessionId} players=${stats.humanPlayers}`);
+  }
+
+  _schedulePersist(sessionId) {
+    const data = this.clientData.get(sessionId);
+    if (!data || !data.userId || !sb.isConfigured()) return;
+    if (this._persistTimers.has(sessionId)) return;
+    const t = setTimeout(() => {
+      this._persistTimers.delete(sessionId);
+      this._persistNow(sessionId).catch(() => {});
+    }, 300);
+    this._persistTimers.set(sessionId, t);
+  }
+
+  async _persistNow(sessionId) {
+    const data = this.clientData.get(sessionId);
+    const player = this.state ? this.state.players.get(sessionId) : null;
+    if (!data || !data.userId || !player || !sb.isConfigured()) return;
+    const econ = this.economy.get(sessionId);
+    const veh = this.vehicles.get(sessionId);
+    const room = this.motel.get(sessionId);
+    try {
+      await sb.savePlayerSnapshot(data.userId, {
+        profile: {
+          display_name: player.name,
+          avatar_key: player.avatar,
+          cash: player.cash,
+          bank: player.bank,
+          job: player.job,
+          hp: player.hp,
+          hunger: player.hunger,
+          stamina: player.stamina,
+          x: player.x,
+          y: player.y,
+        },
+        inventory: econ ? econ.inventory : null,
+        vehicles: veh || null,
+        motel: room || null,
+      });
+    } catch (err) {
+      console.warn('[city] persistNow failed:', err && err.message ? err.message : err);
+    }
   }
 
   // Send a message to one session (or nothing if they already left).
@@ -380,6 +525,13 @@ class CityRoom extends Room {
   _econLog(econ, type, amount, meta) {
     econ.txLog.unshift({ type, amount, at: Date.now(), meta: meta || {} });
     if (econ.txLog.length > 50) econ.txLog.length = 50;
+    if (econ.userId && sb.isConfigured()) {
+      const p = this.state && econ.sessionId ? this.state.players.get(econ.sessionId) : null;
+      const bal = p ? p.cash : 0;
+      const key = (meta && (meta.request_id || meta.idempotency_key)) || null;
+      sb.logTransaction(econ.userId, type, amount, bal, key, meta);
+      if (econ.sessionId) this._schedulePersist(econ.sessionId);
+    }
   }
   _econInventoryObj(econ) {
     const out = {};
@@ -391,6 +543,18 @@ class CityRoom extends Room {
   _isDay() {
     const h = Math.floor((this.state.worldTime || 480) / 60) % 24;
     return h >= 6 && h < 18;
+  }
+  _onEconSync(client) {
+    const player = this.state.players.get(client.sessionId);
+    const econ = this.economy.get(client.sessionId);
+    const data = this.clientData.get(client.sessionId);
+    if (!player || !econ) return;
+    if (econ.atmDay.date !== todayStr()) econ.atmDay = { date: todayStr(), total: 0 };
+    client.send('econ_result', {
+      type: 'sync', ok: true, cash: player.cash, bank: player.bank,
+      inventory: this._econInventoryObj(econ), dayUsed: econ.atmDay.total,
+      authenticated: !!(data && data.userId),
+    });
   }
   _onStarterGrant(client, msg) {
     const ctx = this._econCheck(client, msg, 'starter_grant');
@@ -942,6 +1106,7 @@ class CityRoom extends Room {
       }
       player.vehicleId = type;
       this._syncVehicle(player);
+      this._schedulePersist(client.sessionId);
       send({ ok: true, action: 'mount', vehicleId: type, fuel: player.fuel, durability: player.durability });
       return;
     }
@@ -956,6 +1121,7 @@ class CityRoom extends Room {
       if (this.taxiRides.has(client.sessionId)) this._completeTaxiRide(client.sessionId, 'DROPOFF');
       player.vehicleId = '';
       this._syncVehicle(player);
+      this._schedulePersist(client.sessionId);
       send({ ok: true, action: 'dismount', vehicleId: cur, x: player.x, y: player.y });
       return;
     }
@@ -1360,6 +1526,7 @@ class CityRoom extends Room {
       }
       const chest = {};
       for (const [k, v] of room.chest) chest[k] = v;
+      this._schedulePersist(client.sessionId);
       send({ ok: true, action, itemId, qty, chest, inventory: this._econInventoryObj(econ) });
       return;
     }
@@ -1447,6 +1614,7 @@ class CityRoom extends Room {
     // M4: leaving the taxi_driver job turns "Nhận khách" off.
     if (job !== 'taxi_driver') this.taxiMode.delete(client.sessionId);
     player.job = job;
+    this._schedulePersist(client.sessionId);
     client.send('job_result', { type: 'job', ok: true, job });
     console.log(`[city] ${player.name} job -> ${job}`);
   }
@@ -1782,6 +1950,22 @@ class CityRoom extends Room {
         if (dist(p.x, p.y, bp.x, bp.y) <= NEARBY_RADIUS) { humanNear = true; break; }
       }
       if (humanNear) this._speakProactively(botId);
+    }
+
+    // M5: periodic autosave (every 15 s) for active authenticated players.
+    if (sb.isConfigured() && ++this._saveTickAcc >= 15) {
+      this._saveTickAcc = 0;
+      for (const [sid, d] of this.clientData) {
+        if (!d.isBot && d.userId) {
+          const pl = this.state.players.get(sid);
+          const vh = this.vehicles.get(sid);
+          if (pl && vh && pl.vehicleId && vh[pl.vehicleId]) {
+            vh[pl.vehicleId].x = pl.x; vh[pl.vehicleId].y = pl.y;
+            vh[pl.vehicleId].fuel = pl.fuel; vh[pl.vehicleId].durability = pl.durability;
+          }
+          this._persistNow(sid).catch(() => {});
+        }
+      }
     }
   }
 }

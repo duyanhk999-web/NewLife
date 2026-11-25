@@ -229,6 +229,8 @@
   var netMode = 'offline'; // 'offline' | 'online' | 'reconnecting'
   var myName = 'CongDan';
   var mySessionId = null;
+  var authSb = null; // M5 Supabase Auth client (when server /config provides URL + publishable key)
+  var authSession = null; // current Supabase session
   var firstSelfSync = true;
   var lastSelfBubbleText = '';
   var lastHumanCount = -1;
@@ -1878,6 +1880,8 @@
     btn.on('pointerdown', function () {
       started = true;
       startOverlay.visible = false;
+      var chip = document.getElementById('authChip');
+      if (chip) chip.style.display = 'none';
     });
     startOverlay.addChild(title, sub, guide, btn, statusT);
     startOverlay.userData.title = title;
@@ -3115,7 +3119,7 @@
         if (worldTime > 1200 && minutes < 240) worldDay++;
         worldTime = minutes;
       },
-      // M2: server economy results (starter_grant / shop_buy / atm_transfer /
+      // M2/M5: server economy results (sync / starter_grant / shop_buy / atm_transfer /
       // use_item). Server is authoritative for cash/bank when online.
       onEconResult: function (msg) {
         if (!msg) return;
@@ -3126,6 +3130,13 @@
         }
         if (typeof msg.dayUsed === 'number' && typeof Economy !== 'undefined' && Economy.setOnlineAtmDayUsed) {
           Economy.setOnlineAtmDayUsed(msg.dayUsed);
+        }
+        if (msg.type === 'sync') {
+          if (typeof Economy !== 'undefined') {
+            if (Economy.renderShop) Economy.renderShop();
+            if (Economy.renderAtm) Economy.renderAtm();
+          }
+          return;
         }
         if (msg.ok) {
           if (msg.type === 'shop_buy') {
@@ -3195,6 +3206,7 @@
         setStartStatus('Online — đã kết nối lại');
         // VEHICLES FIX (2026-11-25): re-ask the owned-vehicle status so a
         // returning player's parked bike renders after a reconnect.
+        if (typeof NetClient.sendEconomy === 'function') NetClient.sendEconomy('econ_sync', {});
         if (typeof NetClient.sendVehicle === 'function') NetClient.sendVehicle('status', {});
         if (typeof NetClient.sendMotel === 'function') NetClient.sendMotel('status', {});
       },
@@ -3202,30 +3214,185 @@
         goOffline('reconnect-timeout-30s');
       }
     };
-    NetClient.connect(url).then(function (res) {
-      if (!res.ok) { goOffline(res.reason); return null; }
-      return NetClient.joinRoom('city', { name: myName, avatar: 'hero' });
-    }).then(function (res) {
-      if (!res) return; // already offline
-      if (!res.ok) { goOffline(res.reason); return; }
-      mySessionId = res.sessionId;
-      netMode = 'online';
-      firstSelfSync = true;
-      setNetStatus('Online…');
-      setStartStatus('Online — đã kết nối máy chủ');
-      // M2: ask the server for the (once-per-session) starter grant — the
-      // server starts Cash = 0 and grants 80.000đ here; syncSelf then keeps
-      // the server value authoritative.
-      if (typeof NetClient.sendEconomy === 'function') NetClient.sendEconomy('starter_grant', {});
-      // VEHICLES FIX (2026-11-25): ask for the owned-vehicle status too —
-      // otherwise a returning player never sees their parked bike online
-      // (status was only requested after a buy, so onlineVehicles stayed
-      // {owned:false} and syncParkedVehicles showed nothing).
-      if (typeof NetClient.sendVehicle === 'function') NetClient.sendVehicle('status', {});
-      if (typeof NetClient.sendMotel === 'function') NetClient.sendMotel('status', {});
-    }).catch(function (err) {
-      console.warn('[net] init failed:', err);
-      goOffline('error');
+    function httpUrlFromWs(wsUrl) {
+      return String(wsUrl || '').replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://').replace(/\/+$/, '');
+    }
+    function fetchServerConfig(wsUrl) {
+      var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 4000) : null;
+      return fetch(httpUrlFromWs(wsUrl) + '/config', ctrl ? { signal: ctrl.signal } : {})
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .catch(function () { return null; })
+        .finally(function () { if (timer) clearTimeout(timer); });
+    }
+    function updateAuthChip() {
+      var chip = document.getElementById('authChip');
+      var txt = document.getElementById('authChipText');
+      var btn = document.getElementById('authChipBtn');
+      if (!chip || !txt || !btn) return;
+      if (started || !authSb) { chip.style.display = 'none'; return; }
+      chip.style.display = 'flex';
+      if (authSession && authSession.user) {
+        txt.textContent = 'TK: ' + (authSession.user.email || 'Đã đăng nhập');
+        btn.textContent = 'Đăng xuất';
+      } else {
+        txt.textContent = 'Chế độ Khách (chưa lưu)';
+        btn.textContent = 'Đăng nhập';
+      }
+    }
+    function connectAndJoin(joinOpts) {
+      NetClient.connect(url).then(function (res) {
+        if (!res.ok) { goOffline(res.reason); return null; }
+        return NetClient.joinRoom('city', joinOpts);
+      }).then(function (res) {
+        if (!res) return; // already offline
+        if (!res.ok) { goOffline(res.reason); return; }
+        mySessionId = res.sessionId;
+        netMode = 'online';
+        firstSelfSync = true;
+        setNetStatus('Online…');
+        setStartStatus(authSession ? 'Online — đã đăng nhập & lưu tiến trình' : 'Online — chế độ Khách');
+        updateAuthChip();
+        if (typeof NetClient.sendEconomy === 'function') {
+          NetClient.sendEconomy('econ_sync', {});
+          NetClient.sendEconomy('starter_grant', {});
+        }
+        // VEHICLES FIX (2026-11-25): ask for the owned-vehicle status too —
+        // otherwise a returning player never sees their parked bike online.
+        if (typeof NetClient.sendEconomy === 'function') NetClient.sendEconomy('econ_sync', {});
+        if (typeof NetClient.sendVehicle === 'function') NetClient.sendVehicle('status', {});
+        if (typeof NetClient.sendMotel === 'function') NetClient.sendMotel('status', {});
+      }).catch(function (err) {
+        console.warn('[net] init failed:', err);
+        goOffline('error');
+      });
+    }
+    function openAuthModal() {
+      var modal = document.getElementById('authModal');
+      if (modal) modal.classList.add('open');
+    }
+    function closeAuthModal() {
+      var modal = document.getElementById('authModal');
+      if (modal) modal.classList.remove('open');
+    }
+    function setAuthMsg(msg, isOk) {
+      var el = document.getElementById('authMsg');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.style.color = isOk ? '#a5e08a' : '#ff9a9a';
+    }
+    function wireAuthUi() {
+      var loginBtn = document.getElementById('authLogin');
+      var signupBtn = document.getElementById('authSignup');
+      var guestBtn = document.getElementById('authGuest');
+      var chipBtn = document.getElementById('authChipBtn');
+      var nameEl = document.getElementById('authName');
+      var emailEl = document.getElementById('authEmail');
+      var passEl = document.getElementById('authPass');
+      if (chipBtn) chipBtn.addEventListener('click', function () {
+        if (!authSb) return;
+        if (authSession) {
+          authSb.auth.signOut().then(function () {
+            authSession = null;
+            if (typeof NetClient !== 'undefined' && NetClient.leave) NetClient.leave();
+            updateAuthChip();
+            setAuthMsg('');
+            openAuthModal();
+          });
+        } else {
+          setAuthMsg('');
+          openAuthModal();
+        }
+      });
+      if (guestBtn) guestBtn.addEventListener('click', function () {
+        closeAuthModal();
+        authSession = null;
+        updateAuthChip();
+        connectAndJoin({ name: myName, avatar: 'hero' });
+      });
+      if (loginBtn) loginBtn.addEventListener('click', function () {
+        if (!authSb) return;
+        var email = emailEl ? emailEl.value.trim() : '';
+        var password = passEl ? passEl.value : '';
+        if (!email || !password) { setAuthMsg('Nhập đầy đủ Email và Mật khẩu.'); return; }
+        loginBtn.disabled = true; setAuthMsg('Đang đăng nhập…', true);
+        authSb.auth.signInWithPassword({ email: email, password: password }).then(function (r) {
+          loginBtn.disabled = false;
+          if (r.error || !r.data || !r.data.session) {
+            setAuthMsg((r.error && r.error.message) || 'Đăng nhập thất bại.');
+            return;
+          }
+          authSession = r.data.session;
+          var metaName = (authSession.user.user_metadata && authSession.user.user_metadata.display_name) || email.split('@')[0];
+          myName = String(metaName).slice(0, 24) || myName;
+          playerState.name = myName;
+          closeAuthModal();
+          updateAuthChip();
+          connectAndJoin({ accessToken: authSession.access_token, name: myName, avatar: 'hero' });
+        }).catch(function (err) {
+          loginBtn.disabled = false;
+          setAuthMsg((err && err.message) || 'Lỗi đăng nhập.');
+        });
+      });
+      if (signupBtn) signupBtn.addEventListener('click', function () {
+        if (!authSb) return;
+        var email = emailEl ? emailEl.value.trim() : '';
+        var password = passEl ? passEl.value : '';
+        var nick = (nameEl ? nameEl.value.trim() : '') || (email.split('@')[0] || 'CongDan');
+        if (!email || password.length < 6) { setAuthMsg('Nhập Email hợp lệ và mật khẩu từ 6 ký tự.'); return; }
+        signupBtn.disabled = true; setAuthMsg('Đang đăng ký…', true);
+        authSb.auth.signUp({
+          email: email, password: password,
+          options: { data: { display_name: nick.slice(0, 24) } }
+        }).then(function (r) {
+          signupBtn.disabled = false;
+          if (r.error) { setAuthMsg(r.error.message || 'Đăng ký thất bại.'); return; }
+          if (r.data && r.data.session) {
+            authSession = r.data.session;
+            myName = nick.slice(0, 24);
+            playerState.name = myName;
+            closeAuthModal();
+            updateAuthChip();
+            connectAndJoin({ accessToken: authSession.access_token, name: myName, avatar: 'hero' });
+          } else {
+            setAuthMsg('Đăng ký thành công! Hãy kiểm tra email xác nhận (hoặc tắt Confirm Email trên Supabase) rồi bấm Đăng nhập.', true);
+          }
+        }).catch(function (err) {
+          signupBtn.disabled = false;
+          setAuthMsg((err && err.message) || 'Lỗi đăng ký.');
+        });
+      });
+    }
+
+    wireAuthUi();
+    fetchServerConfig(url).then(function (cfg) {
+      var sbUrl = (cfg && cfg.supabaseUrl) || window.SUPABASE_URL || null;
+      var sbKey = (cfg && cfg.supabasePublishableKey) || window.SUPABASE_ANON_KEY || null;
+      if (sbUrl && sbKey && typeof window.supabase !== 'undefined' && window.supabase.createClient) {
+        try {
+          authSb = window.supabase.createClient(sbUrl, sbKey);
+        } catch (e) { authSb = null; }
+      }
+      if (!authSb) {
+        connectAndJoin({ name: myName, avatar: 'hero' });
+        return null;
+      }
+      return authSb.auth.getSession().then(function (res) {
+        authSession = (res && res.data && res.data.session) ? res.data.session : null;
+        updateAuthChip();
+        if (authSession && authSession.access_token) {
+          var metaName = (authSession.user.user_metadata && authSession.user.user_metadata.display_name) || (authSession.user.email ? authSession.user.email.split('@')[0] : myName);
+          myName = String(metaName).slice(0, 24) || myName;
+          playerState.name = myName;
+          connectAndJoin({ accessToken: authSession.access_token, name: myName, avatar: 'hero' });
+        } else {
+          setNetStatus('Chờ đăng nhập…');
+          setStartStatus('Đăng nhập để lưu tiến trình, hoặc chơi Khách');
+          openAuthModal();
+        }
+      });
+    }).catch(function () {
+      connectAndJoin({ name: myName, avatar: 'hero' });
     });
   }
 
@@ -3358,9 +3525,9 @@
     initNet(); // async, non-blocking: online if a server answers, else offline
 
     window.addEventListener('keydown', function (e) {
-      // typing in the chat input must not move the character (IME-safe:
-      // the chat box is a real DOM <input>)
-      if (chatInputFocused) return;
+      // typing in any DOM input (chat, auth, ATM) must not move the character
+      var activeTag = document.activeElement && document.activeElement.tagName;
+      if (chatInputFocused || activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
       // Esc closes the chat panel from anywhere
       if (e.code === 'Escape' && chatOpen) { e.preventDefault(); closeChat(); return; }
       // Enter opens the chat (or focuses it when already open)

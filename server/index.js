@@ -1,18 +1,43 @@
-/* Đô Thị Ảo — M1 Colyseus game server.
-   Run:  node index.js        (PORT env or 2567)
-   Plain JS, no build step. */
+/* Cuộc Sống Ảo — server/index.js
+   Colyseus game server (PORT env or 2567). Runs DB auto-migrations on boot
+   when DATABASE_URL is configured and exposes /health + public /config. */
 const http = require('http');
 const { Server } = require('colyseus');
 const { WebSocketTransport } = require('@colyseus/ws-transport');
 const { CityRoom } = require('./rooms/CityRoom');
 const stats = require('./stats');
+const { runMigrations, getMigrationStatus } = require('./migrate');
+const sb = require('./supabase');
+
+function setCors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+}
 
 function start(port) {
-  const httpServer = http.createServer((req, res) => {
-    if (req.url === '/health') {
+  const httpServer = http.createServer(async (req, res) => {
+    setCors(res);
+    if (req.method === 'OPTIONS') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    const urlPath = (req.url || '/').split('?')[0];
+    if (urlPath === '/health') {
+      const db = await sb.checkHealth();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, room: 'city', players: stats.humanPlayers }));
-    } else if (req.url === '/' || req.url === '/index.html') {
+      res.end(JSON.stringify({
+        ok: true,
+        room: 'city',
+        players: stats.humanPlayers,
+        migrations: getMigrationStatus(),
+        supabase: db,
+      }));
+    } else if (urlPath === '/config') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(sb.getPublicConfig()));
+    } else if (urlPath === '/' || urlPath === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/plain' });
       res.end('Do Thi Ao — Colyseus city server. Connect a client to room "city".');
     } else {
@@ -33,7 +58,10 @@ function start(port) {
 }
 
 if (require.main === module) {
-  start(parseInt(process.env.PORT || '2567', 10));
+  const port = parseInt(process.env.PORT || '2567', 10);
+  runMigrations()
+    .catch((err) => console.error('[migrate] unexpected error:', err))
+    .finally(() => start(port));
 }
 
 module.exports = { start };

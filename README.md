@@ -16,7 +16,8 @@ Game Roleplay đô thị 2D top-down trên trình duyệt (PC & điện thoại)
 | **M1** | Colyseus server (`city` room, maxClients 8, 20 Hz), authoritative movement, chat 3 kênh + Bot AI (`shared/botBrain.js`) | Đã xong |
 | **M2** | Kinh tế cốt lõi: starter grant **80.000đ** (1 lần), Cửa Hàng 24/7 (giá ngày/đêm), ATM (1k–200k/lần, tối đa 500k/ngày), Supabase SQL RPC | Xong bản local + server stub; chờ Auth M5 |
 | **M3** | Sinh tồn (ngất mất 50% Cash, về Bệnh viện phí 10k + 50% Cash còn lại), Bác sĩ cứu người (25k, cooldown 60s, cap 2 lần/60p/cặp), Shipper đa điểm (Kho + 4 shop), SFX & VFX | Đã xong |
-| **M4** | Map v2 **4.800×4.800 px** (23 tòa nhà, 2 vườn hoa, traffic, thú nuôi), Xe đạp (250k, 234 px/s) & Xe máy (1M, 324 px/s), Taxi NPC & người chơi, Nhà trọ (50k/24h, rương 10 ô), mini-game cấp cứu nhịp tim | Đã xong (online lưu theo phiên RAM; hồi sinh tại phòng trọ & tải trọng kg để M5) |
+| **M4** | Map v2 **4.800×4.800 px** (23 tòa nhà, 2 vườn hoa, traffic, thú nuôi), Xe đạp (250k, 234 px/s) & Xe máy (1M, 324 px/s), Taxi NPC & người chơi, Nhà trọ (50k/24h, rương 10 ô), mini-game cấp cứu nhịp tim | Đã xong |
+| **M5** | Supabase Auth (Đăng nhập / Đăng ký / Khách), auto-migration SQL qua `DATABASE_URL`, lưu bền vững tiền/túi đồ/xe/nhà trọ/vị trí, endpoint `/config` & `/health` | Đã xong (tự fallback in-memory nếu chưa gắn env DB) |
 
 ## Chạy thử
 
