@@ -3219,11 +3219,16 @@
     }
     function fetchServerConfig(wsUrl) {
       var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-      var timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 4000) : null;
+      var timer = ctrl ? setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, 8000) : null;
       return fetch(httpUrlFromWs(wsUrl) + '/config', ctrl ? { signal: ctrl.signal } : {})
         .then(function (r) { return r.ok ? r.json() : null; })
         .catch(function () { return null; })
         .finally(function () { if (timer) clearTimeout(timer); });
+    }
+    function displayNameFromUser(user, fallback) {
+      var meta = (user && user.user_metadata) || {};
+      var raw = meta.display_name || meta.full_name || meta.name || (user && user.email ? user.email.split('@')[0] : '');
+      return String(raw || '').trim().slice(0, 24) || fallback;
     }
     function updateAuthChip() {
       var chip = document.getElementById('authChip');
@@ -3233,7 +3238,8 @@
       if (started || !authSb) { chip.style.display = 'none'; return; }
       chip.style.display = 'flex';
       if (authSession && authSession.user) {
-        txt.textContent = 'TK: ' + (authSession.user.email || 'Đã đăng nhập');
+        var label = authSession.user.email || displayNameFromUser(authSession.user, 'Đã đăng nhập');
+        txt.textContent = 'TK: ' + label;
         btn.textContent = 'Đăng xuất';
       } else {
         txt.textContent = 'Chế độ Khách (chưa lưu)';
@@ -3281,7 +3287,34 @@
       el.textContent = msg || '';
       el.style.color = isOk ? '#a5e08a' : '#ff9a9a';
     }
+    function joinWithSession(session) {
+      authSession = session;
+      myName = displayNameFromUser(session.user, myName);
+      playerState.name = myName;
+      closeAuthModal();
+      updateAuthChip();
+      connectAndJoin({ accessToken: session.access_token, name: myName, avatar: 'hero' });
+    }
+    function parseOAuthCallbackError() {
+      try {
+        var q = new URLSearchParams(window.location.search || '');
+        var h = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
+        return h.get('error_description') || q.get('error_description') || h.get('error') || q.get('error') || '';
+      } catch (e) { return ''; }
+    }
+    function cleanOAuthUrl() {
+      try {
+        var hasAuthHash = /access_token=|refresh_token=|error_description=|error=/.test(window.location.hash || '');
+        var q = new URLSearchParams(window.location.search || '');
+        var hadCode = q.has('code') || q.has('error') || q.has('error_description');
+        if (!hasAuthHash && !hadCode) return;
+        q.delete('code'); q.delete('error'); q.delete('error_description');
+        var qs = q.toString();
+        window.history.replaceState(null, '', window.location.pathname + (qs ? '?' + qs : ''));
+      } catch (e) { /* ignore */ }
+    }
     function wireAuthUi() {
+      var googleBtn = document.getElementById('authGoogle');
       var loginBtn = document.getElementById('authLogin');
       var signupBtn = document.getElementById('authSignup');
       var guestBtn = document.getElementById('authGuest');
@@ -3304,6 +3337,28 @@
           openAuthModal();
         }
       });
+      if (googleBtn) googleBtn.addEventListener('click', function () {
+        if (!authSb) return;
+        googleBtn.disabled = true;
+        setAuthMsg('Đang chuyển sang Google…', true);
+        var redirectTo = window.location.origin + window.location.pathname + window.location.search;
+        authSb.auth.signInWithOAuth({
+          provider: 'google',
+          options: { redirectTo: redirectTo }
+        }).then(function (r) {
+          if (r && r.error) {
+            googleBtn.disabled = false;
+            var msg = r.error.message || 'Không mở được đăng nhập Google.';
+            if (/not enabled|unsupported provider/i.test(msg)) {
+              msg = 'Chưa bật đăng nhập Google trên Supabase (Authentication → Providers → Google).';
+            }
+            setAuthMsg(msg);
+          }
+        }).catch(function (err) {
+          googleBtn.disabled = false;
+          setAuthMsg((err && err.message) || 'Lỗi đăng nhập Google.');
+        });
+      });
       if (guestBtn) guestBtn.addEventListener('click', function () {
         closeAuthModal();
         authSession = null;
@@ -3322,13 +3377,7 @@
             setAuthMsg((r.error && r.error.message) || 'Đăng nhập thất bại.');
             return;
           }
-          authSession = r.data.session;
-          var metaName = (authSession.user.user_metadata && authSession.user.user_metadata.display_name) || email.split('@')[0];
-          myName = String(metaName).slice(0, 24) || myName;
-          playerState.name = myName;
-          closeAuthModal();
-          updateAuthChip();
-          connectAndJoin({ accessToken: authSession.access_token, name: myName, avatar: 'hero' });
+          joinWithSession(r.data.session);
         }).catch(function (err) {
           loginBtn.disabled = false;
           setAuthMsg((err && err.message) || 'Lỗi đăng nhập.');
@@ -3348,12 +3397,7 @@
           signupBtn.disabled = false;
           if (r.error) { setAuthMsg(r.error.message || 'Đăng ký thất bại.'); return; }
           if (r.data && r.data.session) {
-            authSession = r.data.session;
-            myName = nick.slice(0, 24);
-            playerState.name = myName;
-            closeAuthModal();
-            updateAuthChip();
-            connectAndJoin({ accessToken: authSession.access_token, name: myName, avatar: 'hero' });
+            joinWithSession(r.data.session);
           } else {
             setAuthMsg('Đăng ký thành công! Hãy kiểm tra email xác nhận (hoặc tắt Confirm Email trên Supabase) rồi bấm Đăng nhập.', true);
           }
@@ -3365,6 +3409,7 @@
     }
 
     wireAuthUi();
+    var oauthErr = parseOAuthCallbackError();
     fetchServerConfig(url).then(function (cfg) {
       var sbUrl = (cfg && cfg.supabaseUrl) || window.SUPABASE_URL || null;
       var sbKey = (cfg && cfg.supabasePublishableKey) || window.SUPABASE_ANON_KEY || null;
@@ -3378,16 +3423,15 @@
         return null;
       }
       return authSb.auth.getSession().then(function (res) {
+        cleanOAuthUrl();
         authSession = (res && res.data && res.data.session) ? res.data.session : null;
         updateAuthChip();
         if (authSession && authSession.access_token) {
-          var metaName = (authSession.user.user_metadata && authSession.user.user_metadata.display_name) || (authSession.user.email ? authSession.user.email.split('@')[0] : myName);
-          myName = String(metaName).slice(0, 24) || myName;
-          playerState.name = myName;
-          connectAndJoin({ accessToken: authSession.access_token, name: myName, avatar: 'hero' });
+          joinWithSession(authSession);
         } else {
           setNetStatus('Chờ đăng nhập…');
           setStartStatus('Đăng nhập để lưu tiến trình, hoặc chơi Khách');
+          if (oauthErr) setAuthMsg(oauthErr);
           openAuthModal();
         }
       });
