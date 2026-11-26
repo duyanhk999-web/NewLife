@@ -172,6 +172,11 @@
     // under the player. The motorbike prop is reused for the same.
     bicycle: 'assets/v3/prop-bicycle-full.png',
     fenceSeg: 'assets/v3/prop-fence-segment-full.png', fenceCorner: 'assets/v3/prop-fence-corner-full.png',
+    // 2.5D Pixel Art Urban Sidewalk Sample Props
+    sampleSidewalk: 'assets/prop-sidewalk-sample.png',
+    samplePowerBox: 'assets/prop-powerbox-sample.png',
+    sampleStools: 'assets/prop-stools-sample.png',
+    sampleTreeBox: 'assets/prop-treebox-sample.png',
     // M2: *-full.png = transparent full-body sprites for IN-WORLD characters.
     // *-crop.png (portrait crops) are ONLY for the small HUD avatar — never
     // as a moving character (user complaint M1: "sao lại là avatar hình tròn?").
@@ -588,6 +593,46 @@
     // Đường, vỉa hè, vạch kẻ, quảng trường, đèn tín hiệu: src/roadrender.js
     RoadRender.drawRoads(world);
     RoadRender.drawPlaza(world);
+
+    // TEST: Đặt thử nghiệm 1 đoạn vỉa hè 2.5D Pixel Art mới tại Quảng trường (gần điểm spawn 2430, 2650)
+    (function () {
+      if (TEX.sampleSidewalk) {
+        var sw = new PIXI.Sprite(TEX.sampleSidewalk);
+        sw.anchor.set(0.5, 0.5);
+        sw.position.set(2430, 2690);
+        sw.width = 180;
+        sw.height = 70;
+        sw.zIndex = 0;
+        world.addChild(sw);
+      }
+      if (TEX.samplePowerBox) {
+        var pbox = new PIXI.Sprite(TEX.samplePowerBox);
+        pbox.anchor.set(0.5, 1.0);
+        pbox.position.set(2360, 2690);
+        pbox.width = 32;
+        pbox.height = 42;
+        pbox.zIndex = 2690;
+        world.addChild(pbox);
+      }
+      if (TEX.sampleStools) {
+        var stools = new PIXI.Sprite(TEX.sampleStools);
+        stools.anchor.set(0.5, 1.0);
+        stools.position.set(2430, 2690);
+        stools.width = 38;
+        stools.height = 36;
+        stools.zIndex = 2690;
+        world.addChild(stools);
+      }
+      if (TEX.sampleTreeBox) {
+        var tb = new PIXI.Sprite(TEX.sampleTreeBox);
+        tb.anchor.set(0.5, 1.0);
+        tb.position.set(2500, 2690);
+        tb.width = 54;
+        tb.height = 75;
+        tb.zIndex = 2690;
+        world.addChild(tb);
+      }
+    })();
     var plazaLabel = text('Quảng Trường Trung Tâm', 22, 0x5d4037, true);
     plazaLabel.style.stroke = { color: 0xffffff, width: 4 };
     plazaLabel.anchor.set(0.5, 0.5); plazaLabel.position.set(2430, 2145);
