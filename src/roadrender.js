@@ -66,19 +66,44 @@
 
   function drawPlaza(world) {
     var P = R.PLAZA, c = R.CENTER, g = new PIXI.Graphics();
-    g.rect(P.x, P.y, P.w, P.h).fill(0xe3d5b0);
-    for (var i = 60; i < P.w; i += 60) { // mạch gạch lát
-      g.moveTo(P.x + i, P.y).lineTo(P.x + i, P.y + P.h);
-      g.moveTo(P.x, P.y + i).lineTo(P.x + P.w, P.y + i);
+    
+    // 1) Lát đá vỉa hè hoa văn mắt nai phủ toàn bộ nền quảng trường (TilingSprite hoặc hoa văn đồ họa)
+    if (typeof TEX !== 'undefined' && TEX.sidewalkTile) {
+      var tileSprite = new PIXI.TilingSprite({
+        texture: TEX.sidewalkTile,
+        width: P.w,
+        height: P.h
+      });
+      tileSprite.position.set(P.x, P.y);
+      tileSprite.tileScale.set(0.35, 0.35); // tỉ lệ viên gạch vừa vặn người đi bộ
+      world.addChild(tileSprite);
+    } else {
+      g.rect(P.x, P.y, P.w, P.h).fill(0xe3d5b0);
+      for (var i = 60; i < P.w; i += 60) { // mạch gạch lát dự phòng
+        g.moveTo(P.x + i, P.y).lineTo(P.x + i, P.y + P.h);
+        g.moveTo(P.x, P.y + i).lineTo(P.x + P.w, P.y + i);
+      }
+      g.stroke({ width: 1, color: 0xcdbd94 });
     }
-    g.stroke({ width: 1, color: 0xcdbd94 });
-    [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(function (k) { // 4 thảm cỏ góc
+
+    // 2) Bo viền vỉa hè đá xung quanh quảng trường (bo góc tròn bán kính R=30 tại 4 góc)
+    // Lớp đá bó vỉa ngoài dày 12px (màu xám bê tông 0x9a9482)
+    g.roundRect(P.x, P.y, P.w, P.h, 30).stroke({ width: 12, color: 0x9a9482 });
+    // Lớp chỉ viền gạch hoa văn bên trong viền đá (màu đá xám sáng 0xc4bc9f)
+    g.roundRect(P.x + 6, P.y + 6, P.w - 12, P.h - 12, 24).stroke({ width: 4, color: 0xdfd9c3 });
+    // Vạch sơn trắng mép đường bọc ngoài mép vỉa hè
+    g.roundRect(P.x - 4, P.y - 4, P.w + 8, P.h + 8, 34).stroke({ width: 3, color: 0xeeeeee });
+
+    // 3) 4 thảm cỏ góc
+    [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(function (k) {
       var x = P.x + 24 + k[0] * (P.w - 168), y = P.y + 24 + k[1] * (P.h - 168);
       g.roundRect(x, y, 120, 120, 18).fill(0x6fb356).stroke({ width: 6, color: 0xb9a77c });
       for (var f = 0; f < 14; f++) {
         g.circle(x + 18 + (f * 37) % 88, y + 18 + (f * 53) % 88, 5).fill(f % 2 ? 0xf06292 : 0xffd54f);
       }
     });
+
+    // 4) Đài phun nước trung tâm
     g.circle(c.x, c.y, 200).stroke({ width: 10, color: 0xc9a66b });
     g.circle(c.x, c.y, 108).fill(0xbfb4a0);
     g.circle(c.x, c.y, 90).fill(0x5dade2).stroke({ width: 8, color: 0x8d8577 });

@@ -173,6 +173,9 @@
     bicycle: 'assets/v3/prop-bicycle-full.png',
     fenceSeg: 'assets/v3/prop-fence-segment-full.png', fenceCorner: 'assets/v3/prop-fence-corner-full.png',
     // 2.5D Pixel Art Urban Sidewalk Sample Props
+    sidewalkTile: 'assets/sidewalk-tile-vietnam.png',
+    curbStraightH: 'assets/curb-straight-h.png',
+    curbCornerTL: 'assets/curb-corner-tl.png',
     sampleSidewalk: 'assets/prop-sidewalk-sample.png',
     samplePowerBox: 'assets/prop-powerbox-sample.png',
     sampleStools: 'assets/prop-stools-sample.png',
