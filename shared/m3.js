@@ -88,6 +88,20 @@
   var TAXI_CUSTOMER_MAX = 4; // max NPC wandering customers at once (§10.2)
   var TAXI_CUSTOMER_DESPAWN_S = 300; // despawn after 5 min unpicked (§10.2)
 
+  // Danh tính đa dạng cho khách NPC Taxi (học hỏi từ hệ thống Citizen sống động của The Capitol)
+  var TAXI_CITIZEN_PERSONAS = [
+    { name: 'Khách công sở', avatar: 'student', lines: ['Cho tôi ra Bệnh viện kiểm tra sức khỏe gấp!', 'Tới Ngân Hàng giúp tôi nhé bác tài!'] },
+    { name: 'Bác Ba dân phố', avatar: 'guide', lines: ['Bác tài chở tôi về Khu Nhà Trọ nghỉ ngơi nhé.', 'Chở tôi ra Chợ mua ít đồ ăn nha!'] },
+    { name: 'Cô Lan tiểu thương', avatar: 'doctor', lines: ['Ghé Cửa Hàng Tiện Lợi 24/7 giùm cô.', 'Chạy cẩn thận nha tài xế, cô say xe đó!'] },
+    { name: 'Bạn trẻ du khách', avatar: 'hero', lines: ['Chở em tới Quảng Trường hóng gió với anh ơi.', 'Điểm đến quen thuộc, tính cước chuẩn nha bác tài!'] },
+    { name: 'Anh Hùng thợ máy', avatar: 'walker', lines: ['Cho anh về Showroom Xe Máy lấy đồ.', 'Hôm nay đông khách không chú em?'] }
+  ];
+
+  function pickTaxiCitizenPersona(randFn) {
+    var rnd = randFn || Math.random;
+    return TAXI_CITIZEN_PERSONAS[Math.floor(rnd() * TAXI_CITIZEN_PERSONAS.length)];
+  }
+
   // ---- M4 motel (SRS v2.2 §8.2, §4.1 — LOCKED) ----
   var MOTEL_RENT = 50000, MOTEL_RENT_HOURS = 24; // 50.000đ / 24h real
   var MOTEL_CHEST_SLOTS = 10; // 10 item slots; no vehicles, no money
@@ -166,6 +180,31 @@
     var base = 12000 + Math.ceil(distancePx / 500) * 1000;
     var day = clamp(base, 15000, 22000);
     return isNight ? Math.round(day * 1.30) : day;
+  }
+
+  // Dynamic Surge Pricing (học hỏi từ hệ thống khan hiếm/cung cầu động của The Capitol):
+  // Hệ số thưởng đơn hàng tăng khi:
+  // - Ban đêm: giữ nguyên quy chuẩn x1.30 (+30%)
+  // - Đơn hàng gấp / xa (> 2500px): surge +10% (+15% nếu > 3500px)
+  // - Surge cấp số theo nhu cầu thị trường (surgeFactor: 1.0 đến 1.5)
+  function calculateSurgeMultiplier(distancePx, isNight, marketDemandSurge) {
+    var mult = 1.0;
+    if (isNight) mult *= 1.30;
+    if (distancePx >= 3500) mult *= 1.15;
+    else if (distancePx >= 2500) mult *= 1.10;
+    if (typeof marketDemandSurge === 'number' && marketDemandSurge > 1.0) {
+      mult *= Math.min(marketDemandSurge, 1.50); // cap max +50% surge do thị trường
+    }
+    return mult;
+  }
+
+  // §6.4 reward with the LOCKED vehicle multiplier and dynamic surge applied, rounded.
+  function deliveryRewardDynamic(distancePx, isNight, vehicleId, marketDemandSurge) {
+    var base = 12000 + Math.ceil(distancePx / 500) * 1000;
+    var dayBase = clamp(base, 15000, 22000);
+    var surge = calculateSurgeMultiplier(distancePx, isNight, marketDemandSurge);
+    var vMult = shipperPayMultiplier(vehicleId);
+    return Math.round(dayBase * surge * vMult);
   }
 
   // §3.2.3: fainting loses 50% of carried Cash immediately (round down).
@@ -364,6 +403,7 @@
     TAXI_NIGHT_MULT: TAXI_NIGHT_MULT, TAXI_NIGHT_BONUS_MAX: TAXI_NIGHT_BONUS_MAX,
     TAXI_MIN_TRIP_PX: TAXI_MIN_TRIP_PX,
     TAXI_CUSTOMER_MAX: TAXI_CUSTOMER_MAX, TAXI_CUSTOMER_DESPAWN_S: TAXI_CUSTOMER_DESPAWN_S,
+    TAXI_CITIZEN_PERSONAS: TAXI_CITIZEN_PERSONAS, pickTaxiCitizenPersona: pickTaxiCitizenPersona,
     // M4 motel (locked)
     MOTEL_RENT: MOTEL_RENT, MOTEL_RENT_HOURS: MOTEL_RENT_HOURS,
     MOTEL_CHEST_SLOTS: MOTEL_CHEST_SLOTS, MOTEL_CHEST_HOLD_HOURS: MOTEL_CHEST_HOLD_HOURS,
@@ -377,6 +417,8 @@
     clamp: clamp, dist: dist,
     deliverySeconds: deliverySeconds, deliveryReward: deliveryReward,
     deliveryRewardFor: deliveryRewardFor,
+    calculateSurgeMultiplier: calculateSurgeMultiplier,
+    deliveryRewardDynamic: deliveryRewardDynamic,
     faintLoss: faintLoss, hospitalFee: hospitalFee, deductFee: deductFee,
     isNightWorld: isNightWorld, pickDeliveryPoint: pickDeliveryPoint,
     doctorRewardCheck: doctorRewardCheck, collusionFlagged: collusionFlagged,

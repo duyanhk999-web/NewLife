@@ -1193,13 +1193,18 @@ class CityRoom extends Room {
       const x = base.x + c[0] + randRange(-30, 30), y = base.y + c[1] + randRange(-30, 30);
       if (!Colliders.isOpenPoint(x, y)) continue;
       const dest = M3.pickDeliveryPoint();
+      const persona = M3.pickTaxiCitizenPersona ? M3.pickTaxiCitizenPersona() : { name: 'Khách vãng lai', avatar: 'student', lines: ['Bác tài chở tôi đi với!'] };
+      const line = (persona.lines && persona.lines.length) ? persona.lines[Math.floor(Math.random() * persona.lines.length)] : 'Bác tài chở tôi đi với!';
       const npc = new NpcState();
       Object.assign(npc, {
-        id, type: 'taxi_customer', name: 'Khách vãng lai',
-        x, y, targetX: x, targetY: y, avatar: 'student',
+        id, type: 'taxi_customer', name: persona.name || 'Khách vãng lai',
+        x, y, targetX: x, targetY: y, avatar: persona.avatar || 'student',
       });
       this.state.npcs.set(id, npc);
-      this.taxiCustomers.set(id, { destX: dest.x, destY: dest.y, poiName: dest.poiName, spawnedAt: now });
+      this.taxiCustomers.set(id, {
+        destX: dest.x, destY: dest.y, poiName: dest.poiName,
+        spawnedAt: now, personaName: persona.name, line: line,
+      });
       return id;
     }
     return null;
@@ -1410,12 +1415,21 @@ class CityRoom extends Room {
         passengerId: msg.npcId, kind: 'npc', npcId: msg.npcId,
         destX: cust.destX, destY: cust.destY, poiName: cust.poiName,
         distancePx: 0, startedAt: now,
+        passengerName: cust.personaName || 'Khách vãng lai',
+      });
+      // Phát câu thoại của khách chào tài xế qua chat bubble / chat log
+      const speech = cust.line || `Chở tôi tới ${cust.poiName || 'điểm đến'} nhé!`;
+      this.broadcast('chat_message', {
+        fromId: msg.npcId, fromName: cust.personaName || 'Khách vãng lai',
+        channel: 'nearby', text: speech, targetId: client.sessionId, at: now,
       });
       send({
         ok: true, action: 'pickup', npcId: msg.npcId,
         destX: cust.destX, destY: cust.destY, poiName: cust.poiName,
+        passengerName: cust.personaName || 'Khách vãng lai',
+        speech: speech,
       });
-      console.log(`[city] taxi ${player.name} picked up NPC -> ${cust.poiName} (${cust.destX},${cust.destY})`);
+      console.log(`[city] taxi ${player.name} picked up ${cust.personaName || 'NPC'} -> ${cust.poiName} (${cust.destX},${cust.destY})`);
       return;
     }
 
@@ -1670,11 +1684,16 @@ class CityRoom extends Room {
       // vehicle (walk x1.00 / bicycle x1.30 / motorbike x2.00).
       const acceptSpeed = M3.vehicleSpeed(player.vehicleId, player.fuel, player.durability);
       const seconds = M3.deliverySeconds(distance, acceptSpeed);
+      // Áp dụng Dynamic Surge: Nếu khu vực có nhu cầu cao hoặc đơn xa thì tăng thưởng
+      const isNight = M3.isNightWorld(this.state.worldTime);
+      const reward = (typeof M3.deliveryRewardDynamic === 'function')
+        ? M3.deliveryRewardDynamic(distance, isNight, player.vehicleId, 1.0)
+        : M3.deliveryRewardFor(distance, isNight, player.vehicleId);
       const order = {
         id: slot.id + '-' + (++this.orderSeq),
         slotId: slot.id, targetX: slot.targetX, targetY: slot.targetY, poiName: slot.poiName,
         pickupId: slot.pickupId, pickupName: slot.pickupName, pickupX: slot.pickupX, pickupY: slot.pickupY,
-        distance, reward: M3.deliveryRewardFor(distance, M3.isNightWorld(this.state.worldTime), player.vehicleId),
+        distance, reward,
         vehicleId: player.vehicleId || '',
         deadlineAt: now + seconds * 1000, idempotencyKey: randomUUID(),
         status: 'accepted', jobType: 'delivery', userId: client.sessionId,
