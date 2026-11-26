@@ -7,11 +7,29 @@
   var HALF = R.ROAD_W / 2;
   var VEC = { N: [0, -1], S: [0, 1], W: [-1, 0], E: [1, 0] };
 
-  function drawRoads(world) {
+  function drawRoads(world, tex) {
+    tex = tex || (typeof TEX !== 'undefined' ? TEX : (window.TEX || null));
     var g = new PIXI.Graphics();
-    // 1) toàn bộ vỉa hè, 2) bó vỉa, 3) toàn bộ nhựa đường — vẽ theo LỚP nên
-    // vỉa hè của đường này không bao giờ đè lên lòng đường khác.
-    R.SIDEWALK_RECTS.forEach(function (q) { g.rect(q.x, q.y, q.w, q.h).fill(0xd8cfae); });
+    
+    // 1) Toàn bộ vỉa hè: lát đá terrazzo hoa văn mắt nai (hoặc nền gạch chuẩn)
+    if (tex && tex.sidewalkTile) {
+      var swContainer = new PIXI.Container();
+      R.SIDEWALK_RECTS.forEach(function (q) {
+        var ts = new PIXI.TilingSprite({
+          texture: tex.sidewalkTile,
+          width: q.w,
+          height: q.h
+        });
+        ts.position.set(q.x, q.y);
+        ts.tileScale.set(0.075, 0.075); // Thu nhỏ kích thước gạch còn 30%
+        swContainer.addChild(ts);
+      });
+      world.addChild(swContainer);
+    } else {
+      R.SIDEWALK_RECTS.forEach(function (q) { g.rect(q.x, q.y, q.w, q.h).fill(0xd8cfae); });
+    }
+
+    // 2) Bó vỉa bê tông & 3) Lòng đường nhựa
     R.ROAD_RECTS.forEach(function (q) { g.rect(q.x - 5, q.y - 5, q.w + 10, q.h + 10).fill(0x9a9482); });
     R.ROAD_RECTS.forEach(function (q) { g.rect(q.x, q.y, q.w, q.h).fill(0x44474b); });
 
@@ -64,37 +82,63 @@
     return g;
   }
 
-  function drawPlaza(world) {
-    var P = R.PLAZA, c = R.CENTER, g = new PIXI.Graphics();
+  function drawPlaza(world, tex) {
+    tex = tex || (typeof TEX !== 'undefined' ? TEX : (window.TEX || null));
+    var c = R.CENTER, g = new PIXI.Graphics();
     
-    // 1) Lát đá vỉa hè hoa văn mắt nai phủ toàn bộ nền quảng trường (TilingSprite hoặc hoa văn đồ họa)
-    if (typeof TEX !== 'undefined' && TEX.sidewalkTile) {
+    // Toàn bộ khuôn viên đi bộ & vỉa hè bao quanh quảng trường trung tâm:
+    // Từ mép đường nhựa x = 2040..2820, y = 2040..2820 (Kích thước 780 x 780 px)
+    var W_PLAZA = 780, H_PLAZA = 780;
+    var X_PLAZA = 2040, Y_PLAZA = 2040;
+    var R_CORNER = 36; // Bán kính bo tròn góc vỉa hè tiếp giáp đường cua
+
+    // 1) Lát đá vỉa hè hoa văn mắt nai phủ toàn bộ khuôn viên quảng trường
+    if (tex && tex.sidewalkTile) {
       var tileSprite = new PIXI.TilingSprite({
-        texture: TEX.sidewalkTile,
-        width: P.w,
-        height: P.h
+        texture: tex.sidewalkTile,
+        width: W_PLAZA,
+        height: H_PLAZA
       });
-      tileSprite.position.set(P.x, P.y);
-      tileSprite.tileScale.set(0.35, 0.35); // tỉ lệ viên gạch vừa vặn người đi bộ
+      tileSprite.position.set(X_PLAZA, Y_PLAZA);
+      tileSprite.tileScale.set(0.075, 0.075); // Thu nhỏ kích thước gạch còn 30%
+
+      // Mask bo góc tròn khớp hoàn hảo với đá bó vỉa bo tròn
+      var maskG = new PIXI.Graphics();
+      maskG.roundRect(X_PLAZA, Y_PLAZA, W_PLAZA, H_PLAZA, R_CORNER).fill(0xffffff);
+      tileSprite.mask = maskG;
+      world.addChild(maskG);
       world.addChild(tileSprite);
     } else {
-      g.rect(P.x, P.y, P.w, P.h).fill(0xe3d5b0);
-      for (var i = 60; i < P.w; i += 60) { // mạch gạch lát dự phòng
-        g.moveTo(P.x + i, P.y).lineTo(P.x + i, P.y + P.h);
-        g.moveTo(P.x, P.y + i).lineTo(P.x + P.w, P.y + i);
+      g.roundRect(X_PLAZA, Y_PLAZA, W_PLAZA, H_PLAZA, R_CORNER).fill(0xd8cfae);
+      for (var i = 60; i < W_PLAZA; i += 60) {
+        g.moveTo(X_PLAZA + i, Y_PLAZA).lineTo(X_PLAZA + i, Y_PLAZA + H_PLAZA);
+        g.moveTo(X_PLAZA, Y_PLAZA + i).lineTo(X_PLAZA + W_PLAZA, Y_PLAZA + i);
       }
       g.stroke({ width: 1, color: 0xcdbd94 });
     }
 
-    // 2) Bo viền vỉa hè đá xung quanh quảng trường (bo góc tròn bán kính R=30 tại 4 góc)
-    // Lớp đá bó vỉa ngoài dày 12px (màu xám bê tông 0x9a9482)
-    g.roundRect(P.x, P.y, P.w, P.h, 30).stroke({ width: 12, color: 0x9a9482 });
-    // Lớp chỉ viền gạch hoa văn bên trong viền đá (màu đá xám sáng 0xc4bc9f)
-    g.roundRect(P.x + 6, P.y + 6, P.w - 12, P.h - 12, 24).stroke({ width: 4, color: 0xdfd9c3 });
+    // 2) Bo viền vỉa hè tiếp giáp lòng đường (Đá bó vỉa granite + rãnh mép nhựa + vạch kẻ mép đường)
+    // Rãnh thoát nước mép nhựa đường
+    g.roundRect(X_PLAZA - 4, Y_PLAZA - 4, W_PLAZA + 8, H_PLAZA + 8, R_CORNER + 4).stroke({ width: 4, color: 0x2e3033 });
     // Vạch sơn trắng mép đường bọc ngoài mép vỉa hè
-    g.roundRect(P.x - 4, P.y - 4, P.w + 8, P.h + 8, 34).stroke({ width: 3, color: 0xeeeeee });
+    g.roundRect(X_PLAZA - 2, Y_PLAZA - 2, W_PLAZA + 4, H_PLAZA + 4, R_CORNER + 2).stroke({ width: 3, color: 0xeeeeee });
+    // Thân đá bó vỉa hè xám granite chính (dày 8px) bo tròn 4 góc
+    g.roundRect(X_PLAZA, Y_PLAZA, W_PLAZA, H_PLAZA, R_CORNER).stroke({ width: 8, color: 0x827c6f });
+    // Vát cạnh trên đá bó vỉa (bevel sáng)
+    g.roundRect(X_PLAZA + 3, Y_PLAZA + 3, W_PLAZA - 6, H_PLAZA - 6, R_CORNER - 3).stroke({ width: 2, color: 0xcdc4b0 });
 
-    // 3) 4 thảm cỏ góc
+    // 3) Chỉ đá viền ngăn cách nhẹ giữa dải đi bộ sát đường và sân quảng trường trung tâm (660 x 660 px)
+    var P = R.PLAZA;
+    g.roundRect(P.x, P.y, P.w, P.h, 20).stroke({ width: 4, color: 0xb5ab93 });
+    g.roundRect(P.x + 2, P.y + 2, P.w - 4, P.h - 4, 18).stroke({ width: 2, color: 0xe0d7c2 });
+
+    // 4) 4 lối hạ vỉa hè cho người đi bộ tại các vị trí tiếp giáp vạch qua đường
+    g.rect(c.x - 30, Y_PLAZA - 3, 60, 8).fill(0xaba392);
+    g.rect(c.x - 30, Y_PLAZA + H_PLAZA - 5, 60, 8).fill(0xaba392);
+    g.rect(X_PLAZA - 3, c.y - 30, 8, 60).fill(0xaba392);
+    g.rect(X_PLAZA + W_PLAZA - 5, c.y - 30, 8, 60).fill(0xaba392);
+
+    // 5) 4 thảm cỏ góc
     [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(function (k) {
       var x = P.x + 24 + k[0] * (P.w - 168), y = P.y + 24 + k[1] * (P.h - 168);
       g.roundRect(x, y, 120, 120, 18).fill(0x6fb356).stroke({ width: 6, color: 0xb9a77c });
@@ -103,7 +147,7 @@
       }
     });
 
-    // 4) Đài phun nước trung tâm
+    // 6) Đài phun nước trung tâm
     g.circle(c.x, c.y, 200).stroke({ width: 10, color: 0xc9a66b });
     g.circle(c.x, c.y, 108).fill(0xbfb4a0);
     g.circle(c.x, c.y, 90).fill(0x5dade2).stroke({ width: 8, color: 0x8d8577 });
