@@ -3390,9 +3390,13 @@
         var nick = (nameEl ? nameEl.value.trim() : '') || (email.split('@')[0] || 'CongDan');
         if (!email || password.length < 6) { setAuthMsg('Nhập Email hợp lệ và mật khẩu từ 6 ký tự.'); return; }
         signupBtn.disabled = true; setAuthMsg('Đang đăng ký…', true);
+        var redirectTo = window.location.origin + window.location.pathname + window.location.search;
         authSb.auth.signUp({
           email: email, password: password,
-          options: { data: { display_name: nick.slice(0, 24) } }
+          options: {
+            data: { display_name: nick.slice(0, 24) },
+            emailRedirectTo: redirectTo
+          }
         }).then(function (r) {
           signupBtn.disabled = false;
           if (r.error) { setAuthMsg(r.error.message || 'Đăng ký thất bại.'); return; }
