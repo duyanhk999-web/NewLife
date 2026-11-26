@@ -26,27 +26,19 @@
     };
   }
   var rand = mulberry32(20261124);
+  var signalLayer = null;
   function randRange(a, b) { return a + rand() * (b - a); }
   function pick(arr) { return arr[Math.floor(rand() * arr.length)]; }
 
   // ---------- map data (Map v2 — see shared/colliders.js, the source of truth) ----------
-  var ROAD_BANDS = [1140, 2340, 3540]; // roads start at these x/y, width 180
-  var ROAD_W = 180, SIDEWALK_W = 40;
-  function inRoad(x, y) {
-    if (typeof Colliders !== 'undefined' && Colliders.inRoad) return Colliders.inRoad(x, y);
-    for (var i = 0; i < ROAD_BANDS.length; i++) {
-      if (x >= ROAD_BANDS[i] && x <= ROAD_BANDS[i] + ROAD_W) return true;
-      if (y >= ROAD_BANDS[i] && y <= ROAD_BANDS[i] + ROAD_W) return true;
-    }
-    return false;
-  }
+  function inRoad(x, y) { return RoadNet.inRoad(x, y); }
 
   var BUILDINGS = (typeof Colliders !== 'undefined' && Colliders.BUILDINGS) ? Colliders.BUILDINGS : [
-    { id: 'bank',      name: 'Ngân Hàng & ATM',        x: 1425, y: 1425, w: 450, h: 330, color: 0x2e6db4, roof: 0x1d4e89 },
-    { id: 'shop',      name: 'Cửa Hàng Tiện Lợi 24/7', x: 2670, y: 1425, w: 450, h: 330, color: 0xe67e22, roof: 0xb95c0e },
+    { id: 'bank',      name: 'Ngân Hàng & ATM',        x: 1400, y: 1400, w: 450, h: 330, color: 0x2e6db4, roof: 0x1d4e89 },
+    { id: 'shop',      name: 'Cửa Hàng Tiện Lợi 24/7', x: 3000, y: 1400, w: 450, h: 330, color: 0xe67e22, roof: 0xb95c0e },
     { id: 'hospital',  name: 'Bệnh Viện',              x: 3840, y: 1425, w: 570, h: 420, color: 0xecf0f1, roof: 0xc0392b },
-    { id: 'showroom',  name: 'Showroom Xe Máy',        x: 1425, y: 2670, w: 480, h: 360, color: 0x8e44ad, roof: 0x6c3483 },
-    { id: 'motel',     name: 'Khu Nhà Trọ',            x: 2670, y: 2670, w: 480, h: 390, color: 0x16a085, roof: 0x0e6b5c },
+    { id: 'showroom',  name: 'Showroom Xe Máy',        x: 1400, y: 3100, w: 480, h: 360, color: 0x8e44ad, roof: 0x6c3483 },
+    { id: 'motel',     name: 'Khu Nhà Trọ',            x: 2990, y: 3080, w: 480, h: 390, color: 0x16a085, roof: 0x0e6b5c },
     { id: 'warehouse', name: 'Kho Hàng Trung Tâm',     x: 3840, y: 2670, w: 630, h: 480, color: 0x7f8c8d, roof: 0x5d6d7e },
     { id: 'house1',    name: 'Nhà Dân',                x: 180,  y: 180,  w: 390, h: 300, color: 0xf1c40f, roof: 0xd4ac0d },
     { id: 'house2',    name: 'Chung Cư',               x: 1425, y: 180,  w: 480, h: 330, color: 0xecf0f1, roof: 0x95a5a6 },
@@ -58,10 +50,10 @@
     { id: 'house8',    name: 'Chung Cư',               x: 1425, y: 3840, w: 510, h: 390, color: 0xfadbd8, roof: 0xcd6159 },
     { id: 'house9',    name: 'Nhà Dân',                x: 2670, y: 3840, w: 420, h: 390, color: 0xa9cce3, roof: 0x2e86c1 },
     { id: 'market',    name: 'Chợ',                    x: 3840, y: 3840, w: 630, h: 450, color: 0xf9e79f, roof: 0xb7950b },
-    { id: 'police',    name: 'Đồn Công An',            x: 3720, y: 600,  w: 480, h: 360, color: 0x2c3e50, roof: 0x1a252f },
+    { id: 'police',    name: 'Đồn Công An',            x: 3790, y: 600,  w: 480, h: 360, color: 0x2c3e50, roof: 0x1a252f },
     { id: 'school',    name: 'Trường Học',             x: 180,  y: 4240, w: 600, h: 420, color: 0xf5b7b1, roof: 0xec7063 },
-    { id: 'cafe',      name: 'Quán Cà Phê',            x: 2520, y: 4230, w: 360, h: 300, color: 0xa67c52, roof: 0x6e4b2a },
-    { id: 'pavilion',  name: 'Nhà Vọng Cảnh',          x: 4200, y: 600,  w: 300, h: 300, color: 0x7dcea0, roof: 0x2e86c1 },
+    { id: 'cafe',      name: 'Quán Cà Phê',            x: 2580, y: 4230, w: 360, h: 300, color: 0xa67c52, roof: 0x6e4b2a },
+    { id: 'pavilion',  name: 'Nhà Vọng Cảnh',          x: 4390, y: 600,  w: 300, h: 300, color: 0x7dcea0, roof: 0x2e86c1 },
     { id: 'house10',   name: 'Nhà Dân',                x: 3840, y: 4320, w: 390, h: 300, color: 0xf1c40f, roof: 0xd4ac0d },
     { id: 'house11',   name: 'Nhà Dân',                x: 4290, y: 4320, w: 390, h: 300, color: 0x82e0aa, roof: 0x229954 },
     { id: 'house12',   name: 'Chung Cư',               x: 1500, y: 4230, w: 480, h: 360, color: 0xaed6f1, roof: 0x5dade2 }
@@ -72,18 +64,18 @@
 
   // POI marker points (Map v2 building centres; spawn = plaza south edge).
   var POIS = [
-    { id: 'spawn',     name: 'Điểm Hồi Sinh / NPC Hướng Dẫn', x: 2400, y: 2625, color: 0x2ecc71 },
-    { id: 'bank',      name: 'Ngân Hàng & ATM',        x: 1650, y: 1590, color: 0x3498db },
-    { id: 'shop',      name: 'Cửa Hàng Tiện Lợi 24/7', x: 2895, y: 1590, color: 0xe67e22 },
+    { id: 'spawn',     name: 'Điểm Hồi Sinh / NPC Hướng Dẫn', x: 2430, y: 2650, color: 0x2ecc71 },
+    { id: 'bank',      name: 'Ngân Hàng & ATM',        x: 1625, y: 1565, color: 0x3498db },
+    { id: 'shop',      name: 'Cửa Hàng Tiện Lợi 24/7', x: 3225, y: 1565, color: 0xe67e22 },
     { id: 'hospital',  name: 'Bệnh Viện',              x: 4125, y: 1635, color: 0xe74c3c },
-    { id: 'showroom',  name: 'Showroom Xe Máy',        x: 1665, y: 2850, color: 0x9b59b6 },
-    { id: 'motel',     name: 'Khu Nhà Trọ',            x: 2910, y: 2865, color: 0x1abc9c },
+    { id: 'showroom',  name: 'Showroom Xe Máy',        x: 1640, y: 3280, color: 0x9b59b6 },
+    { id: 'motel',     name: 'Khu Nhà Trọ',            x: 3230, y: 3275, color: 0x1abc9c },
     { id: 'warehouse', name: 'Kho Hàng Trung Tâm',     x: 4155, y: 2910, color: 0x95a5a6 },
-    { id: 'police',    name: 'Đồn Công An',            x: 3960, y: 780,  color: 0x2c3e50 },
+    { id: 'police',    name: 'Đồn Công An',            x: 4030, y: 780,  color: 0x2c3e50 },
     { id: 'school',    name: 'Trường Học',             x: 480,  y: 4450, color: 0xec7063 },
-    { id: 'cafe',      name: 'Quán Cà Phê',            x: 2700, y: 4380, color: 0xa67c52 },
+    { id: 'cafe',      name: 'Quán Cà Phê',            x: 2760, y: 4380, color: 0xa67c52 },
     { id: 'market',    name: 'Chợ',                    x: 4155, y: 4065, color: 0xf1c40f },
-    { id: 'pavilion',  name: 'Nhà Vọng Cảnh',          x: 4350, y: 750,  color: 0x7dcea0 }
+    { id: 'pavilion',  name: 'Nhà Vọng Cảnh',          x: 4530, y: 750,  color: 0x7dcea0 }
   ];
 
   function hitBuilding(x, y, r) {
@@ -109,31 +101,12 @@
   function blocked(x, y, r) {
     return hitBuilding(x, y, r) || hitFence(x, y, r) || inFountain(x, y, r);
   }
-  function isOpenPoint(x, y) {
-    if (typeof Colliders !== 'undefined' && Colliders.isOpenPoint) return Colliders.isOpenPoint(x, y);
-    if (x < 40 || y < 40 || x > MAP_W - 40 || y > MAP_H - 40) return false;
-    if (inFountain(x, y, 24)) return false;
-    if (x >= 2070 && x <= 2730 && y >= 2070 && y <= 2730) return true; // plaza
-    // garden entry gaps (Map v2 §4) stay open even where they overlap a road
-    if ((x >= 600 && x <= 680 && y >= 2400 && y <= 2480) || (x >= 1120 && x <= 1200 && y >= 2740 && y <= 2820) ||
-        (x >= 3420 && x <= 3600 && y >= 600 && y <= 680) || (x >= 3000 && x <= 3080 && y >= 940 && y <= 1020)) return true;
-    if (inRoad(x, y)) return false;
-    if (hitBuilding(x, y, 24)) return false;
-    if (hitFence(x, y, 24)) return false;
-    return true;
-  }
-  function randomOpenPoint() {
-    if (typeof Colliders !== 'undefined' && Colliders.randomOpenPoint) return Colliders.randomOpenPoint();
-    for (var i = 0; i < 60; i++) {
-      var x = randRange(60, MAP_W - 60), y = randRange(60, MAP_H - 60);
-      if (isOpenPoint(x, y)) return { x: x, y: y };
-    }
-    return { x: 2400, y: 2625 };
-  }
+  function isOpenPoint(x, y) { return Colliders.isOpenPoint(x, y); }
+  function randomOpenPoint() { return Colliders.randomOpenPoint(); }
 
   // ---------- player state (Colyseus-ready shape) ----------
   var playerState = {
-    id: 'local-1', name: 'CongDan', x: 2400, y: 2625, vx: 0, vy: 0,
+    id: 'local-1', name: 'CongDan', x: 2430, y: 2650, vx: 0, vy: 0,
     anim: 'idle', job: 'unemployed', hp: 100, hunger: 100, stamina: 100,
     // M2 (SRS §4.5/§5.1): profile is created with Cash = 0. The 80.000đ
     // starter grant comes from Economy.starterGrant() — ONE transaction,
@@ -168,14 +141,10 @@
   // ---------- M1: assets (PIXI.Assets, per-file fallback to M0 Graphics) ----------
   var TEX = {}; // key -> PIXI.Texture | null
   var ASSET_FILES = {
-    // Map v2 texture: ONLY the plaza ground + minimap + start backdrop.
+    // Map v2 texture: ONLY the start backdrop.
     // NEVER stretched over the whole 4800 map (1024px would blur badly) —
     // roads / grass are drawn from the layout data in buildWorld().
-    // plaza = full district image (start backdrop only). plazaGround =
-    // centre crop of it (fountain only) — the full image painted a FAKE
-    // road at world y~2620 that connected to nothing (render bug 2026-11-25).
     plaza: 'assets/v3/map-city-v3.png',
-    plazaGround: 'assets/v3/plaza-ground.png',
     // Map v2 buildings: flat-roof crops for the 3/4-front ones (FLUX cannot
     // draw a pure flat roof — bank/shop/showroom/house-b/house-c are crops),
     // TIGHT crops (2026-11-25) for the full-scene ones: FLUX drew each
@@ -186,7 +155,7 @@
     bank: 'assets/v3/building-bank-roof.png', hospital: 'assets/v3/building-hospital-tight.png',
     warehouse: 'assets/v3/building-warehouse-tight.png', shop: 'assets/v3/building-shop-roof.png',
     showroom: 'assets/v3/building-showroom-roof.png', motel: 'assets/v3/building-motel-tight.png',
-    police: 'assets/v3/building-police-tight.png', market: 'assets/v3/building-market-tight.png',
+    policeStation: 'assets/v3/building-police-tight.png', market: 'assets/v3/building-market-tight.png',
     school: 'assets/v3/building-school-tight.png', cafe: 'assets/v3/building-cafe-tight.png',
     pavilion: 'assets/v3/building-pavilion-tight.png',
     houseA: 'assets/v3/house-a-tight.png', houseB: 'assets/v3/house-b-roof.png', houseC: 'assets/v3/house-c-roof.png',
@@ -220,7 +189,7 @@
   // Building sprite per id (Map v2 §6): roof crops where FLUX drew a 3/4
   // facade, full images where the building is already flat. Houses share
   // the 3 variants (a = full, b/c = roof crops).
-  var POI_TEX = { bank: 'bank', hospital: 'hospital', warehouse: 'warehouse', shop: 'shop', showroom: 'showroom', motel: 'motel', police: 'police', market: 'market', school: 'school', cafe: 'cafe', pavilion: 'pavilion' };
+  var POI_TEX = { bank: 'bank', hospital: 'hospital', warehouse: 'warehouse', shop: 'shop', showroom: 'showroom', motel: 'motel', police: 'policeStation', market: 'market', school: 'school', cafe: 'cafe', pavilion: 'pavilion' };
   var HOUSE_TEX = { house1: 'houseA', house2: 'houseC', house3: 'houseA', house4: 'houseC', house5: 'houseB', house6: 'houseB', house7: 'houseA', house8: 'houseC', house9: 'houseB', house10: 'houseA', house11: 'houseB', house12: 'houseC' };
   var AVATAR_TEX = { hero: 'hero', citizen: 'hero', guide: 'hero', shipper: 'shipper', bread: 'bread', taxi: 'taxi', police: 'police', thug: 'thug', student: 'student' };
   var AVATAR_COLOR = { hero: 0x2980b9, citizen: 0x2980b9, guide: 0x27ae60, shipper: 0xf39c12, bread: 0xe67e22, taxi: 0x3498db, police: 0x2c3e50, thug: 0xc0392b, student: 0x9b59b6 };
@@ -445,8 +414,8 @@
   }
   // Bush spots inside the two flower gardens (Map v2 §4: A x3, B x2).
   function gdBushSpots() {
-    return [{ x: 750, y: 2550 }, { x: 1050, y: 2700 }, { x: 900, y: 2650 },
-            { x: 3150, y: 750 }, { x: 3450, y: 900 }];
+    return [{ x: 590, y: 3200 }, { x: 890, y: 3350 }, { x: 740, y: 3300 },
+            { x: 3010, y: 750 }, { x: 3310, y: 900 }];
   }
   // Map v2 §7: one wandering animal (dog/cat). Visual only — no NPC id, no
   // radial menu, no chat. Sprite drawn by width (dog 30px, cat 22px).
@@ -459,7 +428,7 @@
     spr.height = w * tex.height / tex.width;
     spr.position.set(x, y);
     world.addChild(spr);
-    var tgt = randomOpenPoint();
+    var tgt = animalTarget({ x: x, y: y });
     // DOG-STREAK FIX (2026-11-25): PixiJS derives a Sprite's rendered
     // width from scale.x (width = |scale.x| * texture.width) — and setting
     // .width only sets scale.x = w / texture.width ONCE. The old flip code
@@ -477,6 +446,20 @@
   // Animals wander locally (client-side only — the server never sees them).
   // Same pattern as the offline NPC walk: pick a new open target on arrival
   // or when blocked, pause 3-8 s, flip by horizontal movement.
+  // Điểm đích gần đó mà đường thẳng tới nó không cắt lòng đường / vật cản.
+  function animalTarget(a) {
+    for (var i = 0; i < 30; i++) {
+      var x = a.x + (Math.random() - 0.5) * 440, y = a.y + (Math.random() - 0.5) * 440;
+      if (!isOpenPoint(x, y)) continue;
+      var clear = true;
+      for (var t = 1; t <= 20; t++) {
+        var px = a.x + (x - a.x) * t / 20, py = a.y + (y - a.y) * t / 20;
+        if (inRoad(px, py) || blocked(px, py, 10)) { clear = false; break; }
+      }
+      if (clear) return { x: x, y: y };
+    }
+    return { x: a.x, y: a.y };
+  }
   function updateAnimals(dt) {
     var now = Date.now();
     animals.forEach(function (a) {
@@ -485,13 +468,13 @@
       var d = Math.hypot(dx, dy);
       if (d < 10) {
         a.pauseUntil = now + 3000 + Math.random() * 5000;
-        var p = randomOpenPoint();
+        var p = animalTarget(a);
         a.targetX = p.x; a.targetY = p.y;
         return;
       }
       var nx = a.x + dx / d * a.speed * dt, ny = a.y + dy / d * a.speed * dt;
       if (blocked(nx, a.y, 10) || blocked(a.x, ny, 10)) {
-        var p2 = randomOpenPoint();
+        var p2 = animalTarget(a);
         a.targetX = p2.x; a.targetY = p2.y;
         return;
       }
@@ -504,69 +487,48 @@
       else if (dx > 0.1) a.container.scale.x = Math.abs(a.baseScaleX);
     });
   }
-  // ---------- Traffic (2026-11-25): ambient moving vehicles on the roads.
-  // Client-side, visual only — like the animals: no collision with the
-  // player, the server never sees them. 8 vehicles (4 cars + 4 motorbikes)
-  // drive along the road bands (shared/colliders.js ROAD_BANDS at x/y
-  // 1140/2340/3540, width 180) in both directions at 200-300 px/s, two
-  // lanes per band (offsets +45 / +135), wrapping at the map edges.
-  // Orientation is by ROTATION only — never a scale.x flip (the dog-streak
-  // bug: flipping a width-sized sprite resets its width to texture width).
-  // Car texture is wide (741x360, side view), motorbike texture is tall
-  // (204x360, top-down), so their base rotations differ per axis.
-  var TRAFFIC_COUNT = 8;
-  var TRAFFIC_SPEED_MIN = 200, TRAFFIC_SPEED_MAX = 300;
-  var TRAFFIC_WRAP = 120; // wrap margin beyond the map edge
+  // ---------- Traffic: mô phỏng nằm ở shared/roadnet.js, đây chỉ vẽ sprite.
+  // Ảnh ô tô có đầu xe quay sang TRÁI, ảnh xe máy có đầu xe quay LÊN.
+  var TRAFFIC_COUNT = 20;
+  var HEADING_FIX = { car: Math.PI, motorbike: Math.PI / 2 };
   function spawnTraffic() {
     if (!world) return;
-    var kinds = ['car', 'motorbike', 'car', 'motorbike', 'car', 'motorbike', 'car', 'motorbike'];
-    for (var i = 0; i < TRAFFIC_COUNT; i++) {
-      var kind = kinds[i % kinds.length];
-      var tex = TEX[kind];
-      if (!tex) continue;
-      var vertical = (i % 2 === 0); // alternate vertical / horizontal roads
-      var band = ROAD_BANDS[i % ROAD_BANDS.length];
-      var dir = (i % 3 === 0) ? -1 : 1; // both directions
-      // Right-hand traffic: vertical road, driving south (+y) keeps right
-      // (west, smaller x = lane +45); driving north keeps right (east,
-      // +135). Horizontal road: driving east (+x) keeps right (south,
-      // +135); driving west keeps right (north, +45).
-      var lane = vertical ? (dir > 0 ? 45 : 135) : (dir > 0 ? 135 : 45);
-      var speed = TRAFFIC_SPEED_MIN + Math.random() * (TRAFFIC_SPEED_MAX - TRAFFIC_SPEED_MIN);
-      var w = kind === 'car' ? 90 : 34; // same widths as the parked props
+    RoadNet.createTraffic(TRAFFIC_COUNT).forEach(function (v) {
+      var tex = TEX[v.kind];
+      if (!tex) return;
       var spr = new PIXI.Sprite(tex);
       spr.anchor.set(0.5, 0.5);
-      spr.width = w;
-      spr.height = w * tex.height / tex.width;
-      if (kind === 'car') spr.rotation = vertical ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI);
-      else spr.rotation = vertical ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2);
-      var x, y;
-      if (vertical) { x = band + lane; y = Math.random() * MAP_H; }
-      else { x = Math.random() * MAP_W; y = band + lane; }
-      spr.position.set(x, y);
+      // chiều dài xe = v.len; giữ nguyên tỉ lệ ảnh
+      var k = v.len / (v.kind === 'car' ? tex.width : tex.height);
+      spr.width = tex.width * k; spr.height = tex.height * k;
       world.addChild(spr);
-      var t = { kind: kind, spr: spr, vertical: vertical, band: band, lane: lane, dir: dir, speed: speed, x: x, y: y };
-      spr.userData = t; // lets updateCulling follow the vehicle (same as NPCs)
-      traffic.push(t);
-      cullables.push({ obj: spr, x: x - 45, y: y - 45, w: 90, h: 90 });
-    }
+      v.spr = spr;
+      spr.userData = v; // lets updateCulling follow the vehicle (same as NPCs)
+      traffic.push(v);
+      cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
+    });
+    updateTraffic(0);
+  }
+  function trafficObstacles() {
+    var list = [];
+    if (!playerState.isFainted) list.push(playerState);
+    npcs.forEach(function (n) { list.push(n); });
+    Object.keys(remotePlayers).forEach(function (id) {
+      list.push({ x: remotePlayers[id].rx, y: remotePlayers[id].ry });
+    });
+    return list;
   }
   function updateTraffic(dt) {
+    RoadNet.stepTraffic(traffic, dt, signalNow(), trafficObstacles());
     for (var i = 0; i < traffic.length; i++) {
-      var t = traffic[i];
-      if (t.vertical) {
-        t.y += t.dir * t.speed * dt;
-        if (t.y > MAP_H + TRAFFIC_WRAP) t.y = -TRAFFIC_WRAP;
-        else if (t.y < -TRAFFIC_WRAP) t.y = MAP_H + TRAFFIC_WRAP;
-      } else {
-        t.x += t.dir * t.speed * dt;
-        if (t.x > MAP_W + TRAFFIC_WRAP) t.x = -TRAFFIC_WRAP;
-        else if (t.x < -TRAFFIC_WRAP) t.x = MAP_W + TRAFFIC_WRAP;
-      }
-      t.spr.position.set(t.x, t.y);
-      t.spr.zIndex = t.y; // y-sorted with the player
+      var v = traffic[i];
+      v.spr.position.set(v.x, v.y);
+      v.spr.rotation = v.heading + HEADING_FIX[v.kind];
+      v.spr.zIndex = v.y; // y-sorted with the player
     }
   }
+  var serverClockOffset = 0;
+  function signalNow() { return Date.now() + (netMode === 'online' ? serverClockOffset : 0); }
   // Full-body texture for the in-world character (transparent *-full.png).
   function fullTexFor(avatarKey) {
     var k = FULL_TEX[avatarKey] || 'heroFull';
@@ -603,7 +565,7 @@
     // grass patches (deterministic)
     for (var i = 0; i < 500; i++) {
       var gx = randRange(0, MAP_W), gy = randRange(0, MAP_H);
-      if (inRoad(gx, gy)) continue;
+      if (RoadNet.inRoad(gx, gy) || RoadNet.inSidewalk(gx, gy)) continue;
       ground.circle(gx, gy, randRange(6, 18)).fill({ color: 0x4c8a3d, alpha: 0.5 });
     }
     ground.eventMode = 'static';
@@ -623,56 +585,15 @@
       cullables.push({ obj: bed, x: gd.x, y: gd.y, w: gd.w, h: gd.h });
     });
 
-    // Map v2 §2: roads 180px asphalt + 40px beige sidewalks on BOTH sides
-    // of every road (pedestrians on sidewalks/grass, vehicles on the road),
-    // double yellow centre line + white dashed lane markings.
-    var roads = new PIXI.Graphics();
-    for (var r = 0; r < ROAD_BANDS.length; r++) {
-      var p = ROAD_BANDS[r];
-      // sidewalks first (under the asphalt edges)
-      roads.rect(0, p - SIDEWALK_W, MAP_W, SIDEWALK_W).fill(0xd8cfae);
-      roads.rect(0, p + ROAD_W, MAP_W, SIDEWALK_W).fill(0xd8cfae);
-      roads.rect(p - SIDEWALK_W, 0, SIDEWALK_W, MAP_H).fill(0xd8cfae);
-      roads.rect(p + ROAD_W, 0, SIDEWALK_W, MAP_H).fill(0xd8cfae);
-      // asphalt
-      roads.rect(0, p, MAP_W, ROAD_W).fill(0x3d3d3d);
-      roads.rect(p, 0, ROAD_W, MAP_H).fill(0x3d3d3d);
-      // lane dashes (yellow centre + white edge dashes)
-      for (var d = 0; d < MAP_W; d += 80) {
-        roads.rect(d, p + ROAD_W / 2 - 3, 40, 6).fill(0xf7dc6f);
-        roads.rect(p + ROAD_W / 2 - 3, d, 6, 40).fill(0xf7dc6f);
-      }
-    }
-    world.addChild(roads);
-
-    // central plaza (2070,2070,660,660) — plazaGround is the CENTRE crop
-    // of the v3 map texture (fountain only, 624x624). The FULL district
-    // image was drawn here before (2026-11-25 render fix): it painted its
-    // own roads + edge buildings INSIDE the plaza, incl. a fake horizontal
-    // road at world y~2620-2700 — right where the player spawns — that
-    // connected to nothing (the "brown streak" / broken roads live bug).
-    // Fountain is a blocking circle r=90.
-    if (TEX.plazaGround) {
-      var plazaSpr = new PIXI.Sprite(TEX.plazaGround);
-      plazaSpr.width = 660; plazaSpr.height = 660;
-      plazaSpr.position.set(2070, 2070);
-      world.addChild(plazaSpr);
-      cullables.push({ obj: plazaSpr, x: 2070, y: 2070, w: 660, h: 660 });
-    }
-    var plaza = new PIXI.Graphics();
-    if (!TEX.plazaGround) {
-      plaza.rect(2070, 2070, 660, 660).fill(0xd6c9a8);
-      plaza.rect(2070, 2070, 660, 660).stroke({ width: 4, color: 0xb8a888 });
-    }
-    plaza.circle(2400, 2400, 90).fill(0x5dade2);
-    plaza.circle(2400, 2400, 90).stroke({ width: 4, color: 0x2e86c1 });
-    plaza.circle(2400, 2400, 36).fill(0x85c1e9);
+    // Đường, vỉa hè, vạch kẻ, quảng trường, đèn tín hiệu: src/roadrender.js
+    RoadRender.drawRoads(world);
+    RoadRender.drawPlaza(world);
     var plazaLabel = text('Quảng Trường Trung Tâm', 22, 0x5d4037, true);
-    if (TEX.plazaGround) plazaLabel.style.stroke = { color: 0xffffff, width: 4 };
-    plazaLabel.anchor.set(0.5, 0.5); plazaLabel.position.set(2400, 2145);
-    world.addChild(plaza, plazaLabel);
-    cullables.push({ obj: plaza, x: 2070, y: 2070, w: 660, h: 660 });
-    cullables.push({ obj: plazaLabel, x: 2070, y: 2070, w: 660, h: 60 });
+    plazaLabel.style.stroke = { color: 0xffffff, width: 4 };
+    plazaLabel.anchor.set(0.5, 0.5); plazaLabel.position.set(2430, 2145);
+    world.addChild(plazaLabel);
+    cullables.push({ obj: plazaLabel, x: 2100, y: 2100, w: 660, h: 60 });
+    signalLayer = RoadRender.createSignals(world);
 
     // Map v2 §4: flower gardens — beds are drawn BEFORE the roads above
     // (render fix 2026-11-25); only bushes + benches are drawn here
@@ -683,7 +604,7 @@
       propSprite('bushFlower', s.x, s.y, 56);
     });
     // benches: plaza x4 + gardens (A x2, B x1)
-    var benchSpots = [[2150, 2150], [2650, 2150], [2150, 2650], [2650, 2650], [700, 2750], [1100, 2480], [3200, 950]];
+    var benchSpots = [[2160, 2330], [2700, 2330], [2160, 2540], [2700, 2540], [540, 3400], [940, 3130], [3060, 950]];
     benchSpots.forEach(function (s) {
       propSprite('bench', s[0], s[1], 56);
     });
@@ -761,7 +682,7 @@
     });
     // fence corners where two runs meet (the other two corners of each
     // garden are the open gaps — no corner sprite there).
-    [[1200, 2400], [600, 2820], [3000, 600], [3600, 1020]].forEach(function (pt) {
+    [[1040, 3050], [440, 3470], [2860, 600], [3460, 1020]].forEach(function (pt) {
       propSprite('fenceCorner', pt[0], pt[1], 56);
     });
 
@@ -779,8 +700,9 @@
     // never on roads/sidewalks/plaza. Decorative only (no collision),
     // same as the M0 code-drawn trees — the design leaves that choice to
     // code, and blocking trees would need a shared tree list.
-    for (var t = 0; t < 60; t++) {
-      var tp = randomOpenPoint();
+    var treeSpots = RoadRender.treeSpots(60, rand);
+    for (var t = 0; t < treeSpots.length; t++) {
+      var tp = treeSpots[t];
       var tree = propSprite(t % 2 === 0 ? 'treeA' : 'treeB', tp.x, tp.y, randRange(56, 90));
       if (!tree) {
         var tf = new PIXI.Graphics();
@@ -796,33 +718,30 @@
 
     // lamps along roads (glow at night) — v3 lamp sprite at road
     // intersections; the glow Graphics feed DTA_VFX.init() in boot().
-    for (var lx = 200; lx < MAP_W; lx += 400) {
-      for (var ly = 200; ly < MAP_H; ly += 400) {
-        if (!inRoad(lx, ly)) continue;
-        var lampX = lx + 70, lampY = ly - 20;
-        var lamp = propSprite('lamp', lampX, lampY, 26);
-        if (!lamp) {
-          lamp = new PIXI.Graphics();
-          lamp.rect(-2, -22, 4, 22).fill(0x333333);
-          lamp.circle(0, -24, 6).fill(0xffe082);
-          world.addChild(lamp);
-          lamp.position.set(lampX, lampY);
-          cullables.push({ obj: lamp, x: lampX - 20, y: lampY - 50, w: 40, h: 50 });
-        }
-        var glow = new PIXI.Graphics();
-        glow.circle(0, 0, 34).fill({ color: 0xffe082, alpha: 0.18 });
-        glow.position.set(lampX, lampY - 24);
-        glow.visible = false;
-        world.addChild(glow);
-        lampGlows.push(glow);
-        cullables.push({ obj: glow, x: lampX - 40, y: lampY - 60, w: 80, h: 80 });
+    RoadRender.lampSpots().forEach(function (s) {
+      var lampX = s.x, lampY = s.y;
+      var lamp = propSprite('lamp', lampX, lampY - 18, 18);
+      if (!lamp) {
+        lamp = new PIXI.Graphics();
+        lamp.rect(-2, -22, 4, 22).fill(0x333333);
+        lamp.circle(0, -24, 6).fill(0xffe082);
+        world.addChild(lamp);
+        lamp.position.set(lampX, lampY);
+        cullables.push({ obj: lamp, x: lampX - 20, y: lampY - 50, w: 40, h: 50 });
       }
-    }
+      var glow = new PIXI.Graphics();
+      glow.circle(0, 0, 34).fill({ color: 0xffe082, alpha: 0.18 });
+      glow.position.set(lampX, lampY - 30);
+      glow.visible = false;
+      world.addChild(glow);
+      lampGlows.push(glow);
+      cullables.push({ obj: glow, x: lampX - 40, y: lampY - 70, w: 80, h: 80 });
+    });
 
     // parked vehicles (Map v2 §5, decorative): 5 motorbikes in a row at the
     // showroom, cars at the hospital bay, police car park and motel car park.
-    [1500, 1600, 1700, 1800, 1900].forEach(function (bx) {
-      propSprite('motorbike', bx, 3080, 34);
+    [3140, 3200, 3260].forEach(function (by) {
+      propSprite('motorbike', 1960, by, 30);
     });
     // VEHICLES FIX (2026-11-25): the OWNED parked vehicles — one labelled
     // container per type (sprite + green ring + "Xe … của bạn" label), shown
@@ -855,24 +774,24 @@
     });
     propSprite('car', 4000, 1920, 90);
     propSprite('car', 3900, 1010, 90);
-    propSprite('car', 2850, 3130, 90);
+    propSprite('car', 2750, 3300, 90);
     // delivery boxes + bins (decorative): boxes at the warehouse dock,
     // bins near the shop, market, plaza and gardens.
     propSprite('box', 3900, 3200, 40);
     propSprite('box', 3980, 3200, 40);
-    [[2900, 1800], [4100, 3800], [2700, 2400], [900, 2400], [3400, 600]].forEach(function (bp) {
+    [[3250, 1770], [4100, 3815], [2700, 2260], [900, 3000], [3250, 560]].forEach(function (bp) {
       propSprite('bin', bp[0], bp[1], 30);
     });
 
     // NPCs (M2: full-body persona sprites, not code-drawn persons)
     for (var n = 0; n < 10; n++) {
-      var sp = randomOpenPoint();
+      var walker = RoadNet.createWalker(Math.floor(Math.random() * RoadNet.PED.length), { speed: 90 });
+      var sp = { x: walker.x, y: walker.y };
       var npc = makeFullBody(TEX[WALKER_FULL[n % WALKER_FULL.length]], null);
       npc.position.set(sp.x, sp.y);
       npc.eventMode = 'static';
       npc.cursor = 'pointer';
       npc.on('pointerdown', onWorldPointerDown);
-      var tgt = randomOpenPoint();
       // M3 (§10.2): server id 'npc-walker-i' + a BotBrain persona (cycles
       // the 5 on-foot personas, index-aligned with WALKER_FULL) so
       // "Nói chuyện" gets a persona line in the matching voice, online & offline.
@@ -883,7 +802,7 @@
       var npcFace = (npc.userData && npc.userData.face) || npc;
       var obj = {
         id: 'npc-walker-' + n, personaId: personaId, lastTalkLine: null,
-        container: npc, face: npcFace, x: sp.x, y: sp.y, targetX: tgt.x, targetY: tgt.y,
+        container: npc, face: npcFace, x: sp.x, y: sp.y, walker: walker,
         speed: 90, name: NPC_NAMES[n % NPC_NAMES.length],
         color: NPC_COLORS[n % NPC_COLORS.length], isTutorial: false
       };
@@ -906,25 +825,25 @@
     // holding a helmet (verified by viewing the sprite), so the Guide reads
     // as a friendly driver, not a man sitting on a motorbike (the v2 look).
     tutorialNpc = makeFullBody(TEX.taxiFull, null);
-    tutorialNpc.position.set(2400, 2520);
+    tutorialNpc.position.set(2430, 2545);
     tutorialNpc.eventMode = 'static';
     tutorialNpc.cursor = 'pointer';
     tutorialNpc.on('pointerdown', onWorldPointerDown);
     var tutObj = {
       id: 'npc-guide', personaId: null, lastTalkLine: null,
-      container: tutorialNpc, x: 2400, y: 2520, targetX: 2400, targetY: 2520,
+      container: tutorialNpc, x: 2430, y: 2545, targetX: 2430, targetY: 2545,
       speed: 0, name: 'NPC Hướng Dẫn', color: 0x27ae60, isTutorial: true
     };
     tutorialNpc.userData = tutObj;
-    tutorialNpc.zIndex = 2520; // static guide: y-sorted like the movers
+    tutorialNpc.zIndex = 2545; // static guide: y-sorted like the movers
     world.addChild(tutorialNpc);
     npcs.push(tutObj);
-    cullables.push({ obj: tutorialNpc, x: 2380, y: 2490, w: 40, h: 60 });
+    cullables.push({ obj: tutorialNpc, x: 2410, y: 2515, w: 40, h: 60 });
     var tutLabel = text('NPC Hướng Dẫn', 18, 0xffff00, true);
-    tutLabel.anchor.set(0.5, 0.5); tutLabel.position.set(2400, 2478);
+    tutLabel.anchor.set(0.5, 0.5); tutLabel.position.set(2430, 2503);
     tutLabel.zIndex = 99999; // UI label: always above movers
     world.addChild(tutLabel);
-    cullables.push({ obj: tutLabel, x: 2300, y: 2460, w: 200, h: 36 });
+    cullables.push({ obj: tutLabel, x: 2330, y: 2485, w: 200, h: 36 });
 
     // player (M2: full-body hero sprite + shadow; M0 code-drawn person as fallback)
     player = makeFullBody(TEX.heroFull, playerState.name);
@@ -1678,10 +1597,8 @@
     var R = minimapR(), s = 2 * R / MAP_W;
     minimapG.clear();
     minimapG.circle(0, 0, R).fill(0x5da24a);
-    // roads (Map v2: 180px bands)
-    ROAD_BANDS.forEach(function (p) {
-      minimapG.rect(-R, (p + ROAD_W / 2) * s - R, 2 * R, ROAD_W * s).fill(0x3d3d3d);
-      minimapG.rect((p + ROAD_W / 2) * s - R, -R, ROAD_W * s, 2 * R).fill(0x3d3d3d);
+    RoadNet.ROAD_RECTS.forEach(function (q) {
+      minimapG.rect(q.x * s - R, q.y * s - R, q.w * s, q.h * s).fill(0x3d3d3d);
     });
     BUILDINGS.forEach(function (b) {
       minimapG.rect(b.x * s - R, b.y * s - R, b.w * s, b.h * s).fill(0x888888);
@@ -2160,19 +2077,9 @@
         }
         return;
       }
-      var dx = n.targetX - n.x, dy = n.targetY - n.y;
-      var d = Math.hypot(dx, dy);
-      if (d < 12) {
-        var p = randomOpenPoint();
-        n.targetX = p.x; n.targetY = p.y;
-        return;
-      }
-      var stepX = dx / d * n.speed * dt;
-      var stepY = dy / d * n.speed * dt;
-      var nx = n.x + stepX, ny = n.y + stepY;
-      if (blocked(nx, n.y, 14)) { var p2 = randomOpenPoint(); n.targetX = p2.x; n.targetY = p2.y; return; }
-      if (blocked(n.x, ny, 14)) { var p3 = randomOpenPoint(); n.targetX = p3.x; n.targetY = p3.y; return; }
-      n.x = nx; n.y = ny;
+      var w = RoadNet.stepWalker(n.walker, dt, signalNow());
+      var stepX = w.x - n.x;
+      n.x = w.x; n.y = w.y;
       n.container.position.set(n.x, n.y);
       n.container.zIndex = n.y; // y-sorted with the player / traffic
       // Flip the inner face container, not the outer container (see the
@@ -2310,21 +2217,10 @@
       var r = remotePlayers[id];
       if (netMode === 'offline' && r.wander) {
         // local wander (same rules as M0 NPCs / server bots)
-        if (now < r.wander.pauseUntil) { /* paused */ }
-        else {
-          var dx = r.wander.targetX - r.rx, dy = r.wander.targetY - r.ry;
-          var d = Math.hypot(dx, dy);
-          if (d < 8) {
-            r.wander.pauseUntil = now + 3000 + Math.random() * 5000;
-            var p = randomOpenPoint();
-            r.wander.targetX = p.x; r.wander.targetY = p.y;
-          } else {
-            var step = r.wander.speed * dt;
-            var nx = r.rx + dx / d * step, ny = r.ry + dy / d * step;
-            if (!blocked(nx, ny, 16)) { r.rx = nx; r.ry = ny; }
-            else { var p2 = randomOpenPoint(); r.wander.targetX = p2.x; r.wander.targetY = p2.y; }
-          }
-        }
+        var w = RoadNet.stepWalker(r.wander, dt, signalNow());
+        if (w.x - r.rx < -0.1) r.face.scale.x = -1;
+        else if (w.x - r.rx > 0.1) r.face.scale.x = 1;
+        r.rx = w.x; r.ry = w.y;
         // proactive chat: every 20-40 s, only when the player is within 600px
         if (now >= r.nextProactiveAt) {
           r.nextProactiveAt = now + 20000 + Math.random() * 20000;
@@ -2352,13 +2248,15 @@
     if (offlineBotsSpawned) return;
     if (typeof BotBrain === 'undefined') { console.warn('[bots] BotBrain not loaded, offline bots disabled'); return; }
     BotBrain.PERSONAS.forEach(function (persona) {
-      var sp = randomOpenPoint();
-      var tgt = randomOpenPoint();
+      var near = randomOpenPoint();
+      var home = { x: 2430, y: 2650 };
+      var walker = RoadNet.createWalker(RoadNet.nearestPed(home.x + (near.x % 600) - 300, home.y + (near.y % 600) - 300),
+        { speed: 45 + Math.random() * 30, home: home, radius: 900 });
       createRemotePlayer(
-        { id: 'bot-' + persona.id, name: persona.name, x: sp.x, y: sp.y, avatar: persona.avatar, isFainted: false },
+        { id: 'bot-' + persona.id, name: persona.name, x: walker.x, y: walker.y, avatar: persona.avatar, isFainted: false },
         {
           isBot: true, personaId: persona.id,
-          wander: { targetX: tgt.x, targetY: tgt.y, pauseUntil: 0, speed: 45 + Math.random() * 30 },
+          wander: walker,
           brain: BotBrain.createBotState(persona.id),
           nextProactiveAt: Date.now() + 20000 + Math.random() * 20000
         }
@@ -3111,6 +3009,9 @@
         if (typeof Economy !== 'undefined' && Economy.renderMotel) Economy.renderMotel();
         if (typeof Economy !== 'undefined' && Economy.renderShop) Economy.renderShop();
       },
+      onServerNow: function (ms) {
+        if (ms) serverClockOffset = ms - Date.now();
+      },
       onWorldTime: function (minutes) {
         if (netMode !== 'online') return;
         // midnight wrap on the server also starts a new game day; the
@@ -3670,6 +3571,7 @@
         updateNPCs(dt);
         updateAnimals(dt);
         updateTraffic(dt); // ambient cars/motorbikes on the roads
+        RoadRender.updateSignals(signalLayer, signalNow());
         updateRemotePlayers(dt);
         updateTaxiCustomerSprites();
         updateTalkHint(); // TAP-TO-TALK: floating 💬 above the nearest in-range NPC/player

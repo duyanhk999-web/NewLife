@@ -93,7 +93,7 @@ var Economy = global.window.Economy;
 check('economy.js loads in Node with stubs', !!Economy && typeof Economy.init === 'function');
 
 // Fake player state: start at the Showroom, then walk to the parked bike.
-var st = { x: 1665, y: 2850, cash: 0, bank: 0, isFainted: false, vehicleId: null, fuel: 100, durability: 100 };
+var st = { x: 1640, y: 3280, cash: 0, bank: 0, isFainted: false, vehicleId: null, fuel: 100, durability: 100 };
 var initRes = Economy.init(st, null);
 check('fresh wallet gets the 80.000đ starter grant', st.cash === 80000, 'cash=' + st.cash);
 check('no vehicle owned at first', !Economy.getVehicleState().bicycle.owned && !Economy.getVehicleState().motorbike.owned);
@@ -104,15 +104,15 @@ var buyBike = Economy.buyVehicle('bicycle');
 check('buy bicycle at the Showroom works', buyBike.ok, JSON.stringify(buyBike));
 check('bicycle costs 250.000đ', st.cash === 30000, 'cash=' + st.cash);
 var vs = Economy.getVehicleState();
-check('bicycle parked on the showroom lot (1665,3120)',
-  vs.bicycle.owned && vs.bicycle.x === 1665 && vs.bicycle.y === 3120,
+check('bicycle parked on the showroom lot (1960,3380)',
+  vs.bicycle.owned && vs.bicycle.x === 1960 && vs.bicycle.y === 3380,
   vs.bicycle.owned ? '(' + vs.bicycle.x + ',' + vs.bicycle.y + ')' : 'not owned');
 // Too far to mount from the Showroom door.
 var farMount = Economy.mountVehicle('bicycle');
-check('mount from 270px away fails TOO_FAR', !farMount.ok && farMount.error === 'TOO_FAR',
+check('mount from 335px away fails TOO_FAR', !farMount.ok && farMount.error === 'TOO_FAR',
   JSON.stringify(farMount));
 // Walk to the parked bike and mount.
-st.x = 1665; st.y = 3120;
+st.x = 1960; st.y = 3380;
 var mountBike = Economy.mountVehicle('bicycle');
 check('mount within 80px works', mountBike.ok, JSON.stringify(mountBike));
 check('riding bicycle after mount', Economy.getRiding() === 'bicycle');
@@ -126,7 +126,7 @@ check('not riding after dismount', Economy.getRiding() === '');
 check('bicycle re-parked at the dismount spot (2000,3000)',
   Economy.getVehicleState().bicycle.x === 2000 && Economy.getVehicleState().bicycle.y === 3000);
 // Walk back to the Showroom door — the bike is now 367px away.
-st.x = 1665; st.y = 2850;
+st.x = 1640; st.y = 3280;
 var mountFar = Economy.mountVehicle('bicycle');
 check('mount from the old spot fails TOO_FAR (bike moved)',
   !mountFar.ok && mountFar.error === 'TOO_FAR');
@@ -137,12 +137,12 @@ check('dismount again to reset', Economy.dismountVehicle().ok);
 
 // Motorbike: 1.000.000đ.
 Economy.grant(1000000, 'test');
-st.x = 1665; st.y = 2850;
+st.x = 1640; st.y = 3280;
 var buyMoto = Economy.buyVehicle('motorbike');
 check('buy motorbike at the Showroom works', buyMoto.ok, JSON.stringify(buyMoto));
-check('motorbike parked on the showroom lot (1665,3120)',
-  Economy.getVehicleState().motorbike.x === 1665 && Economy.getVehicleState().motorbike.y === 3120);
-st.x = 1665; st.y = 3120;
+check('motorbike parked on the showroom lot (1960,3380)',
+  Economy.getVehicleState().motorbike.x === 1960 && Economy.getVehicleState().motorbike.y === 3380);
+st.x = 1960; st.y = 3380;
 check('mount motorbike works', Economy.mountVehicle('motorbike').ok);
 check('riding motorbike after mount', Economy.getRiding() === 'motorbike');
 check('speed is 324 px/s while riding the motorbike', Economy.ridingSpeed() === 324);

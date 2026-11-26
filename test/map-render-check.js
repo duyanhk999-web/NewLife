@@ -74,24 +74,7 @@ else {
 check('main.js fallback BUILDINGS identical to shared/colliders.js', fbBad.length === 0,
   fbBad.join('; ') || Colliders.BUILDINGS.length + ' rects match');
 
-// ---- 2. no building overlaps an asphalt road band --------------------------
-var ROAD_W = 180, BANDS = [1140, 2340, 3540];
-var roadRects = [];
-BANDS.forEach(function (p) {
-  roadRects.push({ x: p, y: 0, w: ROAD_W, h: 4800 });
-  roadRects.push({ x: 0, y: p, w: 4800, h: ROAD_W });
-});
-var roadHits = [];
-Colliders.BUILDINGS.forEach(function (b) {
-  roadRects.forEach(function (r, i) {
-    if (rectsOverlap(b, r)) roadHits.push(b.id + ' x road#' + i);
-  });
-});
-check('no building overlaps a road band', roadHits.length === 0, roadHits.join(', ') || 'clean');
-var school = Colliders.BUILDINGS.filter(function (b) { return b.id === 'school'; })[0];
-var pavilion = Colliders.BUILDINGS.filter(function (b) { return b.id === 'pavilion'; })[0];
-check('school moved clear of road 1140', school.x === 180 && school.y === 4240, JSON.stringify({ x: school.x, y: school.y }));
-check('pavilion moved clear of road 3540', pavilion.x === 4200 && pavilion.y === 600, JSON.stringify({ x: pavilion.x, y: pavilion.y }));
+// ---- 2. road overlap: kiểm tra trong test/roadnet-check.js ----------------
 
 // ---- 3. no building-vs-building overlap ------------------------------------
 var bbHits = [];
@@ -103,84 +86,6 @@ for (var i = 0; i < Colliders.BUILDINGS.length; i++) {
   }
 }
 check('no building-vs-building overlap', bbHits.length === 0, bbHits.join(', ') || 'clean');
-
-// ---- 4. road continuity: no building covers a road-centre sample -----------
-var blocked = [];
-BANDS.forEach(function (p) {
-  for (var d = 0; d <= 4800; d += 60) {
-    var pts = [{ x: p + 90, y: d }, { x: d, y: p + 90 }];
-    pts.forEach(function (pt) {
-      Colliders.BUILDINGS.forEach(function (b) {
-        if (containsPoint(b, pt.x, pt.y)) blocked.push(b.id + ' @(' + pt.x + ',' + pt.y + ')');
-      });
-    });
-  }
-});
-check('road centre samples clear of buildings', blocked.length === 0,
-  blocked.slice(0, 5).join(', ') || 'all 486 samples clear');
-
-// ---- 5. plaza: cropped ground texture, fountain centred --------------------
-var plazaDims = pngDims('assets/v3/plaza-ground.png');
-check('plaza-ground.png exists and is square', !!plazaDims && plazaDims.w === plazaDims.h,
-  plazaDims ? plazaDims.w + 'x' + plazaDims.h : 'missing');
-check('plaza sprite uses TEX.plazaGround (not the full district image)',
-  mainSrc.indexOf('new PIXI.Sprite(TEX.plazaGround)') >= 0 &&
-  (mainSrc.match(/new PIXI\.Sprite\(TEX\.plaza\)/g) || []).length === 1,
-  'plazaGround for the plaza, full image kept only for the start backdrop');
-// fountain offset inside the crop (cyan pixels) — must land on (2400,2400)
-var plazaPng = null;
-try {
-  var zlib = require('zlib');
-  var raw = fs.readFileSync(path.join(ROOT, 'assets/v3/plaza-ground.png'));
-  // minimal PNG decode: only IHDR + IDAT, non-interlaced, 8-bit RGB(A)
-  var pos = 8, idat = [], w = 0, h = 0, bitDepth = 0, colorType = 0;
-  while (pos < raw.length) {
-    var len = raw.readUInt32BE(pos), type = raw.toString('ascii', pos + 4, pos + 8);
-    if (type === 'IHDR') { w = raw.readUInt32BE(pos + 8); h = raw.readUInt32BE(pos + 12); bitDepth = raw[pos + 16]; colorType = raw[pos + 17]; }
-    if (type === 'IDAT') idat.push(raw.slice(pos + 8, pos + 8 + len));
-    if (type === 'IEND') break;
-    pos += 12 + len;
-  }
-  var data = zlib.inflateSync(Buffer.concat(idat));
-  var ch = colorType === 6 ? 4 : 3, stride = w * ch;
-  var px = Buffer.alloc(w * h * ch);
-  var prev = Buffer.alloc(stride);
-  var p = 0;
-  for (var y = 0; y < h; y++) {
-    var f = data[p++];
-    var line = data.slice(p, p + stride); p += stride;
-    var out = Buffer.alloc(stride);
-    for (var x = 0; x < stride; x++) {
-      var a = x >= ch ? out[x - ch] : 0, b = prev[x], c = x >= ch ? prev[x - ch] : 0;
-      var v = line[x];
-      if (f === 1) v = (v + a) & 255;
-      else if (f === 2) v = (v + b) & 255;
-      else if (f === 3) v = (v + ((a + b) >> 1)) & 255;
-      else if (f === 4) {
-        var pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c);
-        var pr = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
-        v = (v + pr) & 255;
-      }
-      out[x] = v;
-    }
-    out.copy(px, y * stride); prev = out;
-  }
-  var minX = 1e9, maxX = -1, minY = 1e9, maxY = -1;
-  for (var yy = 0; yy < h; yy++) for (var xx = 0; xx < w; xx++) {
-    var o = (yy * w + xx) * ch, r = px[o], g = px[o + 1], b2 = px[o + 2];
-    if (r >= 30 && r <= 110 && g >= 160 && g <= 220 && b2 >= 210) {
-      if (xx < minX) minX = xx; if (xx > maxX) maxX = xx;
-      if (yy < minY) minY = yy; if (yy > maxY) maxY = yy;
-    }
-  }
-  if (maxX >= 0) {
-    var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    plazaPng = { cx: cx, cy: cy, dx: cx - w / 2, dy: cy - h / 2 };
-  }
-} catch (e) { plazaPng = null; }
-check('plaza crop fountain centred on the real fountain (2400,2400)', !!plazaPng &&
-  Math.abs(plazaPng.dx) <= 8 && Math.abs(plazaPng.dy) <= 8,
-  plazaPng ? 'offset (' + plazaPng.dx.toFixed(0) + ',' + plazaPng.dy.toFixed(0) + ')px in crop' : 'cyan scan failed');
 
 // ---- 6. tight crops exist with the recorded dims ---------------------------
 var tight = {
@@ -249,8 +154,8 @@ check('contain-fit: every building sprite inside its rect, aspect kept, centred'
 // ---- 8. draw order: garden beds BEFORE roads -------------------------------
 var buildWorld = mainSrc.slice(mainSrc.indexOf('function buildWorld()'));
 var bedIdx = buildWorld.indexOf('bed.rect(gd.x, gd.y, gd.w, gd.h)');
-var roadsIdx = buildWorld.indexOf('var roads = new PIXI.Graphics();');
-var plazaIdx = buildWorld.indexOf('var plazaSpr = new PIXI.Sprite(TEX.plazaGround)');
+var roadsIdx = buildWorld.indexOf('RoadRender.drawRoads(world)');
+var plazaIdx = buildWorld.indexOf('RoadRender.drawPlaza(world)');
 check('garden beds drawn before roads (roads paint over the overlap)',
   bedIdx >= 0 && roadsIdx >= 0 && bedIdx < roadsIdx, 'bed@' + bedIdx + ' roads@' + roadsIdx);
 check('plaza sprite drawn after roads', plazaIdx > roadsIdx, 'plaza@' + plazaIdx);

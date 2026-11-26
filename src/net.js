@@ -278,6 +278,9 @@
           state.listen('worldTime', function (value) {
             self._call('onWorldTime', value);
           });
+          state.listen('serverNow', function (value) {
+            self._call('onServerNow', value);
+          });
         }
       }
       // Full-state sweep on every patch (safety net if a granular callback

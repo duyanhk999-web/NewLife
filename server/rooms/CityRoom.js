@@ -5,6 +5,7 @@
    the guide + walkers live in state.npcs. */
 const { Room } = require('colyseus');
 const { PlayerState, NpcState, CityRoomState } = require('../schema');
+const RoadNet = require('../../shared/roadnet');
 const Colliders = require('../../shared/colliders');
 const BotBrain = require('../../shared/botBrain');
 const M3 = require('../../shared/m3');
@@ -15,9 +16,9 @@ const sb = require('../supabase');
 const WALK_SPEED = 180, SPRINT_SPEED = 300;
 const HOSPITAL = { x: 4125, y: 1635 }; // SRS §3.1 POI (== M3.HOSPITAL_POS, Map v2)
 const HOSPITAL_SPAWN = M3.HOSPITAL_SPAWN || { x: 4125, y: 1890 }; // Open ground south of Hospital (never spawn inside collider)
-const MOTEL_SPAWN = M3.MOTEL_SPAWN || { x: 2910, y: 3100 }; // Open ground south of Motel (never spawn inside collider)
-const GUIDE_POS = { x: 2400, y: 2520 }; // Map v2 (clear of the fountain)
-const SPAWN = { x: 2400, y: 2625 }; // Map v2 plaza south edge
+const MOTEL_SPAWN = M3.MOTEL_SPAWN || { x: 2950, y: 3275 }; // Open ground south of Motel (never spawn inside collider)
+const GUIDE_POS = { x: 2430, y: 2545 }; // Map v2 (clear of the fountain)
+const SPAWN = { x: 2430, y: 2650 }; // Map v2 plaza south edge
 const CHAT_BUBBLE_MS = 4000;
 const NEARBY_RADIUS = 600;
 const FAINT_SECONDS = 60;
@@ -45,10 +46,10 @@ const SHOP_ITEMS = {
 };
 const STARTER_GRANT = 80000; // v2.2 (supersedes v2.1: 50.000đ)
 const ATM_MIN = 1000, ATM_MAX = 200000, ATM_DAY_MAX = 500000;
-const SHOP_POS = { x: 2895, y: 1590 }; // Cửa Hàng Tiện Lợi POI (Map v2)
-const BANK_POS = { x: 1650, y: 1590 }; // Ngân Hàng & ATM POI (Map v2)
-const SHOWROOM_POS = { x: 1665, y: 2850 }; // Showroom Xe Máy POI (Map v2)
-const MOTEL_POS = { x: 2910, y: 2865 }; // Khu Nhà Trọ POI (Map v2)
+const SHOP_POS = { x: 3225, y: 1565 }; // Cửa Hàng Tiện Lợi POI (Map v2)
+const BANK_POS = { x: 1625, y: 1565 }; // Ngân Hàng & ATM POI (Map v2)
+const SHOWROOM_POS = { x: 1640, y: 3280 }; // Showroom Xe Máy POI (Map v2)
+const MOTEL_POS = { x: 3230, y: 3275 }; // Khu Nhà Trọ POI (Map v2)
 const ECON_RANGE = 300;
 // M4 taxi: NPC customers wait at road intersections (road centres 1230 /
 // 2430 / 3630 — bands 1140/2340/3540 + 180 wide).
@@ -85,6 +86,7 @@ class CityRoom extends Room {
 
   onCreate() {
     this.setState(new CityRoomState());
+    this.state.serverNow = Date.now();
     stats.rooms += 1;
 
     // Server-only bookkeeping (never synced to clients).
@@ -165,7 +167,10 @@ class CityRoom extends Room {
   _spawnBots() {
     for (const persona of BotBrain.PERSONAS) {
       const id = 'bot-' + persona.id;
-      const p = randomOpenPointNearSpawn(800);
+      const near = randomOpenPointNearSpawn(800);
+      const speed = randRange(45, 75); // M0 NPC speed range
+      const walker = RoadNet.createWalker(RoadNet.nearestPed(near.x, near.y), { speed, home: SPAWN, radius: 900 });
+      const p = { x: walker.x, y: walker.y };
       const ps = new PlayerState();
       Object.assign(ps, {
         id, name: persona.name, x: p.x, y: p.y, vx: 0, vy: 0,
@@ -177,8 +182,7 @@ class CityRoom extends Room {
       this.bots.set(id, {
         personaId: persona.id,
         brain: BotBrain.createBotState(persona.id),
-        targetX: p.x, targetY: p.y, pauseUntil: 0,
-        speed: randRange(45, 75), // M0 NPC speed range
+        walker,
         nextProactiveAt: Date.now() + randRange(5000, 25000),
       });
       this.clientData.set(id, { isBot: true });
@@ -195,7 +199,8 @@ class CityRoom extends Room {
     this.state.npcs.set(guide.id, guide);
 
     for (let i = 0; i < 10; i++) {
-      const p = Colliders.randomOpenPoint();
+      const walker = RoadNet.createWalker(Math.floor(Math.random() * RoadNet.PED.length), { speed: 90 });
+      const p = { x: walker.x, y: walker.y };
       const npc = new NpcState();
       Object.assign(npc, {
         id: 'npc-walker-' + i, type: 'walker',
@@ -208,7 +213,7 @@ class CityRoom extends Room {
       // and each one has a BotBrain persona so "Nói chuyện" (§10.2) gets a
       // persona line in the matching voice (index-aligned with WALKER_AVATARS).
       this.walkers.set(npc.id, {
-        targetX: p.x, targetY: p.y, pauseUntil: 0, speed: 90,
+        walker,
         personaId: WALKER_PERSONAS[i % WALKER_PERSONAS.length],
         lastTalkLine: null,
       });
@@ -274,6 +279,12 @@ class CityRoom extends Room {
           stamina = clamp(Number(prof.stamina ?? 100), 0, 100);
           invMap = loaded.inventory || new Map();
           vehObj = loaded.vehicles || { bicycle: null, motorbike: null };
+          // Map v3: xe đỗ ở chỗ nay đã thành nhà / rào -> về bãi showroom.
+          for (const v of Object.values(vehObj)) {
+            if (v && typeof v.x === 'number' && blocked(v.x, v.y, 16)) {
+              v.x = SHOWROOM_POS.x + 320; v.y = SHOWROOM_POS.y + 100;
+            }
+          }
           motelObj = loaded.motel || null;
           if (motelObj && M3.motelChestState(motelObj.expiresAt, Date.now()) === 'deleted') {
             motelObj.chest.clear();
@@ -1089,7 +1100,7 @@ class CityRoom extends Room {
       // Parked on the open lot SOUTH of the Showroom — the showroom
       // building itself (x1425-1905, y2670-3030) is blocked, so parking at
       // SHOWROOM_POS would strand the vehicle where nobody can mount it.
-      veh[type] = { fuel: 100, durability: 100, x: SHOWROOM_POS.x, y: SHOWROOM_POS.y + 270 };
+      veh[type] = { fuel: 100, durability: 100, x: SHOWROOM_POS.x + 320, y: SHOWROOM_POS.y + 100 };
       this._econLog(econ, 'asset_buy', -price, { asset_type: 'vehicle', asset_code: type });
       send({ ok: true, action: 'buy', vehicleId: type, cash: player.cash, bank: player.bank, price });
       console.log(`[city] ${player.name} bought ${type} for ${price}đ`);
@@ -1684,16 +1695,11 @@ class CityRoom extends Room {
       // vehicle (walk x1.00 / bicycle x1.30 / motorbike x2.00).
       const acceptSpeed = M3.vehicleSpeed(player.vehicleId, player.fuel, player.durability);
       const seconds = M3.deliverySeconds(distance, acceptSpeed);
-      // Áp dụng Dynamic Surge: Nếu khu vực có nhu cầu cao hoặc đơn xa thì tăng thưởng
-      const isNight = M3.isNightWorld(this.state.worldTime);
-      const reward = (typeof M3.deliveryRewardDynamic === 'function')
-        ? M3.deliveryRewardDynamic(distance, isNight, player.vehicleId, 1.0)
-        : M3.deliveryRewardFor(distance, isNight, player.vehicleId);
       const order = {
         id: slot.id + '-' + (++this.orderSeq),
         slotId: slot.id, targetX: slot.targetX, targetY: slot.targetY, poiName: slot.poiName,
         pickupId: slot.pickupId, pickupName: slot.pickupName, pickupX: slot.pickupX, pickupY: slot.pickupY,
-        distance, reward,
+        distance, reward: M3.deliveryRewardFor(distance, M3.isNightWorld(this.state.worldTime), player.vehicleId),
         vehicleId: player.vehicleId || '',
         deadlineAt: now + seconds * 1000, idempotencyKey: randomUUID(),
         status: 'accepted', jobType: 'delivery', userId: client.sessionId,
@@ -1810,41 +1816,17 @@ class CityRoom extends Room {
   }
 
   _wander(p, bot, dt) {
-    const now = Date.now();
-    if (now < bot.pauseUntil) { p.vx = 0; p.vy = 0; if (p.anim !== 'idle') p.anim = 'idle'; return; }
-    const d = dist(p.x, p.y, bot.targetX, bot.targetY);
-    if (d < 8) {
-      bot.pauseUntil = now + randRange(3000, 8000);
-      p.vx = 0; p.vy = 0; p.anim = 'idle';
-      const t = randomOpenPointNearSpawn(1200);
-      bot.targetX = t.x; bot.targetY = t.y;
-      return;
-    }
-    const step = bot.speed * dt;
-    const nx = p.x + ((bot.targetX - p.x) / d) * step;
-    const ny = p.y + ((bot.targetY - p.y) / d) * step;
-    if (!blocked(nx, ny, 16)) { p.x = nx; p.y = ny; }
-    else { const t = randomOpenPointNearSpawn(1200); bot.targetX = t.x; bot.targetY = t.y; }
-    p.vx = ((bot.targetX - p.x) / d) * bot.speed;
-    p.vy = ((bot.targetY - p.y) / d) * bot.speed;
-    p.anim = 'walk';
+    const w = RoadNet.stepWalker(bot.walker, dt, Date.now());
+    const moved = Math.hypot(w.x - p.x, w.y - p.y);
+    p.vx = (w.x - p.x) / dt; p.vy = (w.y - p.y) / dt;
+    p.x = w.x; p.y = w.y;
+    const anim = moved > 0.01 ? 'walk' : 'idle';
+    if (p.anim !== anim) p.anim = anim;
   }
 
-  _wanderNpc(n, w, dt) {
-    const now = Date.now();
-    if (now < w.pauseUntil) return;
-    const d = dist(n.x, n.y, w.targetX, w.targetY);
-    if (d < 8) {
-      w.pauseUntil = now + randRange(3000, 8000);
-      const t = Colliders.randomOpenPoint();
-      w.targetX = t.x; w.targetY = t.y; n.targetX = t.x; n.targetY = t.y;
-      return;
-    }
-    const step = w.speed * dt;
-    const nx = n.x + ((w.targetX - n.x) / d) * step;
-    const ny = n.y + ((w.targetY - n.y) / d) * step;
-    if (!blocked(nx, ny, 16)) { n.x = nx; n.y = ny; }
-    else { const t = Colliders.randomOpenPoint(); w.targetX = t.x; w.targetY = t.y; n.targetX = t.x; n.targetY = t.y; }
+  _wanderNpc(n, entry, dt) {
+    const w = RoadNet.stepWalker(entry.walker, dt, Date.now());
+    n.x = w.x; n.y = w.y; n.targetX = w.x; n.targetY = w.y;
   }
 
   // 1 s tick: world clock, survival, faint auto-revive, bot proactive chat.
@@ -1852,6 +1834,7 @@ class CityRoom extends Room {
     if (!this.state) return;
     const now = Date.now();
     this.state.worldTime = (this.state.worldTime + 1) % 1440; // 1 game-min / real sec
+    this.state.serverNow = now; // client chỉnh lệch giờ để đèn tín hiệu khớp server
 
     for (const [id, p] of this.state.players) {
       // Expire chat bubbles.

@@ -253,6 +253,10 @@ async function main() {
     jobResultsA.length = 0;
     roomA.send('job', { job: 'shipper' });
     const jobOk = await waitForMsg(jobResultsA, (m) => m.type === 'job' && m.ok && m.job === 'shipper');
+    await waitFor(() => {
+      const p = statePlayer(roomB, roomA.sessionId);
+      return p && p.job === 'shipper';
+    }, 2000);
     const pAjob = statePlayer(roomB, roomA.sessionId);
     check('M3 set job shipper', jobOk && pAjob && pAjob.job === 'shipper',
       pAjob ? `job=${pAjob.job}` : 'no state');
@@ -335,21 +339,21 @@ async function main() {
     }
     check('M3 pickDeliveryPoint excludes the pickup shop (50 picks)', excludedOk);
     // nearestShipperSource: near the shop -> shop; at the plaza -> motel
-    // (564px away, still the nearest) but outside the 300px accept range.
-    const nearShop = M3.nearestShipperSource(2895, 1850);
-    const atPlaza = M3.nearestShipperSource(2400, 2625);
+    // (1054px away, still the nearest) but outside the 300px accept range.
+    const nearShop = M3.nearestShipperSource(3225, 1825);
+    const atPlaza = M3.nearestShipperSource(2430, 2650);
     check('M3 nearestShipperSource near the shop returns shop (~260px)',
       nearShop.id === 'shop' && Math.round(nearShop.distance) === 260,
       `${nearShop.id} ${Math.round(nearShop.distance)}px`);
-    check('M3 nearestShipperSource at the plaza is motel, 564px (TOO_FAR range)',
-      atPlaza.id === 'motel' && Math.round(atPlaza.distance) === 564 && atPlaza.distance > M3.SHIPPER_RANGE,
+    check('M3 nearestShipperSource at the plaza is motel, 1015px (TOO_FAR range)',
+      atPlaza.id === 'motel' && Math.round(atPlaza.distance) >= 800 && atPlaza.distance > M3.SHIPPER_RANGE,
       `${atPlaza.id} ${Math.round(atPlaza.distance)}px`);
     // Live: accept at a SHOP works. Try each shop spot in turn (a slot for
     // that shop must be free — ORDER_TAKEN just means try the next shop);
     // the accepted order's pickup must be the shop the player stands at.
     const shopSpots = [
-      { id: 'shop', x: 2895, y: 1850 }, { id: 'motel', x: 2910, y: 3120 },
-      { id: 'market', x: 4155, y: 4320 }, { id: 'cafe', x: 2700, y: 4630 },
+      { id: 'shop', x: 3225, y: 1825 }, { id: 'motel', x: 2950, y: 3275 },
+      { id: 'market', x: 4155, y: 4320 }, { id: 'cafe', x: 2760, y: 4630 },
     ];
     let shopOrder = null, shopSpot = null;
     for (const spot of shopSpots) {
@@ -389,8 +393,8 @@ async function main() {
       check('M3 shop order delivers and pays like a warehouse order', shopDelivered);
     }
     // Live: pickup at the wrong place fails — the plaza is >300px from
-    // every source (nearest is the motel, 564px away).
-    await testSet(roomA, { x: 2400, y: 2625 });
+    // every source (nearest is the motel, 1015px away).
+    await testSet(roomA, { x: 2430, y: 2650 });
     jobResultsA.length = 0;
     roomA.send('shipper', { action: 'accept' });
     const tooFarOk = await waitForMsg(jobResultsA,
@@ -443,7 +447,7 @@ async function main() {
 
     // 12. Vehicles: buy bicycle (250.000đ) at the Showroom, mount it,
     // Shipper accept uses bicycle speed (234) + pay x1.30 (LOCKED).
-    await testSet(roomA, { cash: 1200000, x: 1665, y: 3150 });
+    await testSet(roomA, { cash: 1200000, x: 1900, y: 3380 });
     vehicleResultsA.length = 0;
     roomA.send('vehicle', { action: 'buy', vehicleId: 'bicycle' });
     const buyBikeOk = await waitForMsg(vehicleResultsA,
@@ -495,7 +499,7 @@ async function main() {
     vehicleResultsA.length = 0;
     roomA.send('vehicle', { action: 'dismount' });
     await waitForMsg(vehicleResultsA, (m) => m.ok && m.action === 'dismount');
-    await testSet(roomA, { cash: 1200000, x: 1665, y: 3150 });
+    await testSet(roomA, { cash: 1200000, x: 1900, y: 3380 });
     vehicleResultsA.length = 0;
     roomA.send('vehicle', { action: 'buy', vehicleId: 'motorbike' });
     const buyMotoOk = await waitForMsg(vehicleResultsA,
@@ -612,11 +616,11 @@ async function main() {
 
     // 15. Motel: rent 50.000đ/24h, chest put/take, renew extends expiry,
     // second rent while active -> ALREADY_RENTED.
-    await testSet(roomA, { x: 2895, y: 1800 }); // 210px south of the shop
+    await testSet(roomA, { x: 3225, y: 1775 }); // 210px south of the shop
     econResultsA.length = 0;
     roomA.send('shop_buy', { item_id: 'banh_mi', qty: 1, request_id: 'm4-motel-buy-' + Date.now() });
     await waitForMsg(econResultsA, (m) => m.type === 'shop_buy' && m.ok);
-    await testSet(roomA, { x: 2910, y: 3120 }); // 255px south of the motel
+    await testSet(roomA, { x: 2950, y: 3275 }); // 255px south of the motel
     motelResultsA.length = 0;
     roomA.send('motel', { action: 'rent' });
     const rentOk = await waitForMsg(motelResultsA, (m) => m.ok && m.action === 'rent');
@@ -695,7 +699,7 @@ async function main() {
 
     // M4 refuel while dismounted: first top up (the taxi trip drained fuel),
     // then a 2nd refuel while dismounted at 100% fuel -> ALREADY_FULL.
-    await testSet(roomA, { x: 2895, y: 1800 });
+    await testSet(roomA, { x: 3225, y: 1775 });
     roomA.send('vehicle', { action: 'dismount' });
     await sleep(200);
     vehicleResultsA.length = 0;

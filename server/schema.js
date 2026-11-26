@@ -67,12 +67,14 @@ class CityRoomState extends Schema {
     this.players = new MapSchema();
     this.npcs = new MapSchema();
     this.worldTime = 480; // 08:00, minutes 0..1440
+    this.serverNow = 0;
   }
 }
 defineTypes(CityRoomState, {
   players: { map: PlayerState },
   npcs: { map: NpcState },
   worldTime: 'number',
+  serverNow: 'float64', // ms epoch ('number' có thể mất chính xác)
 });
 
 module.exports = { PlayerState, NpcState, CityRoomState };

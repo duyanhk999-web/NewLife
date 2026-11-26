@@ -36,9 +36,9 @@
   // speed so old callers keep working (its old value 540 is gone).
   var WALK_SPEED = 180, SPRINT_SPEED = 300;
   var BICYCLE_SPEED = 234, MOTORBIKE_SPEED = 324, BIKE_SPEED = 234;
-  var SHOWROOM_POS = { x: 1665, y: 2850 }; // Showroom Xe Máy POI (Map v2)
-  var MOTEL_POS = { x: 2910, y: 2865 };    // Khu Nhà Trọ POI (Map v2)
-  var MOTEL_SPAWN = { x: 2910, y: 3100 };  // Open ground south of Motel (outside building rect)
+  var SHOWROOM_POS = { x: 1640, y: 3280 }; // Showroom Xe Máy POI (Map v2)
+  var MOTEL_POS = { x: 3230, y: 3275 };    // Khu Nhà Trọ POI (Map v2)
+  var MOTEL_SPAWN = { x: 2950, y: 3275 };  // Open ground south of Motel (outside building rect)
   var MOUNT_RANGE = 80;   // must be within 80 px of the parked vehicle (§8.1)
   var PICKUP_RANGE = 120; // taxi pickup / revive range for passengers
   var DROPOFF_RANGE = 80; // must be within 80 px of the destination
@@ -121,12 +121,12 @@
   // the pickup point, so it is never a delivery target. Coords are Map v2
   // building centres (shared/colliders.js §3).
   var DELIVERY_POIS = [
-    { id: 'spawn',    name: 'Quảng Trường Trung Tâm', x: 2400, y: 2625 },
-    { id: 'bank',     name: 'Ngân Hàng & ATM',        x: 1650, y: 1590 },
-    { id: 'shop',     name: 'Cửa Hàng Tiện Lợi 24/7', x: 2895, y: 1590 },
+    { id: 'spawn',    name: 'Quảng Trường Trung Tâm', x: 2430, y: 2650 },
+    { id: 'bank',     name: 'Ngân Hàng & ATM',        x: 1625, y: 1565 },
+    { id: 'shop',     name: 'Cửa Hàng Tiện Lợi 24/7', x: 3225, y: 1565 },
     { id: 'hospital', name: 'Bệnh Viện',              x: 4125, y: 1635 },
-    { id: 'showroom', name: 'Showroom Xe Máy',        x: 1665, y: 2850 },
-    { id: 'motel',    name: 'Khu Nhà Trọ',            x: 2910, y: 2865 }
+    { id: 'showroom', name: 'Showroom Xe Máy',        x: 1640, y: 3280 },
+    { id: 'motel',    name: 'Khu Nhà Trọ',            x: 3230, y: 3275 }
   ];
 
   // ---- Shipper pickup sources (user decision 2026-11-25) ----
@@ -139,10 +139,10 @@
   // 50% branch); WAREHOUSE_POS above is the same point.
   var SHIPPER_SOURCES = [
     { id: 'warehouse', name: 'Kho Hàng Trung Tâm',     x: 4155, y: 2910 },
-    { id: 'shop',      name: 'Cửa Hàng Tiện Lợi 24/7', x: 2895, y: 1590 },
-    { id: 'motel',     name: 'Khu Nhà Trọ',            x: 2910, y: 2865 },
+    { id: 'shop',      name: 'Cửa Hàng Tiện Lợi 24/7', x: 3225, y: 1565 },
+    { id: 'motel',     name: 'Khu Nhà Trọ',            x: 3230, y: 3275 },
     { id: 'market',    name: 'Chợ',                    x: 4155, y: 4065 },
-    { id: 'cafe',      name: 'Quán Cà Phê',            x: 2700, y: 4380 }
+    { id: 'cafe',      name: 'Quán Cà Phê',            x: 2760, y: 4380 }
   ];
   // Pick an order's pickup source: 50% warehouse, 50% one of the shops
   // (uniform among the 4 shops). randFn defaults to Math.random; pass a

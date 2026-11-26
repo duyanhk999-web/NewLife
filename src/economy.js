@@ -29,10 +29,10 @@
   };
   var STARTER_GRANT = 80000; // v2.2 (supersedes v2.1: 50.000đ)
   var ATM_MIN = 1000, ATM_MAX = 200000, ATM_DAY_MAX = 500000;
-  var SHOP_POS = { x: 2895, y: 1590 }; // Cửa Hàng Tiện Lợi POI (Map v2)
-  var BANK_POS = { x: 1650, y: 1590 }; // Ngân Hàng & ATM POI (Map v2)
-  var SHOWROOM_POS = { x: 1665, y: 2850 }; // Showroom Xe Máy POI (Map v2)
-  var MOTEL_POS = { x: 2910, y: 2865 }; // Khu Nhà Trọ POI (Map v2)
+  var SHOP_POS = { x: 3225, y: 1565 }; // Cửa Hàng Tiện Lợi POI (Map v2)
+  var BANK_POS = { x: 1625, y: 1565 }; // Ngân Hàng & ATM POI (Map v2)
+  var SHOWROOM_POS = { x: 1640, y: 3280 }; // Showroom Xe Máy POI (Map v2)
+  var MOTEL_POS = { x: 3230, y: 3275 }; // Khu Nhà Trọ POI (Map v2)
   var SHOP_RANGE = 300; // must be within 300px to open shop/ATM (SRS gameplay)
   var LS_KEY = 'dta_m2_wallet_v1';
 
@@ -76,6 +76,7 @@
         if (w && typeof w.cash === 'number') {
           // M4 migration: wallets saved before M4 have no vehicles/motel.
           if (!w.vehicles) w.vehicles = { bicycle: null, motorbike: null };
+          unstickVehicles(w.vehicles);
           if (!w.motel) w.motel = { expiresAt: 0, chest: {} };
           return w;
         }
@@ -156,6 +157,17 @@
     return { ok: true, cash: wallet.cash, bank: wallet.bank };
   }
 
+  // Map v3: xe đỗ ở chỗ nay đã thành nhà / rào -> chuyển về bãi showroom.
+  function unstickVehicles(vehicles) {
+    if (typeof Colliders === 'undefined') return;
+    Object.keys(vehicles || {}).forEach(function (k) {
+      var v = vehicles[k];
+      if (v && typeof v.x === 'number' && (Colliders.hitBuilding(v.x, v.y, 16) || Colliders.hitFence(v.x, v.y, 16))) {
+        v.x = SHOWROOM_POS.x + 320; v.y = SHOWROOM_POS.y + 100;
+      }
+    });
+  }
+
   // ---- M4 vehicles + motel (offline mirror of the server, shared/m3.js) ----
   // Money for vehicles/motel comes from Cash first, then Bank (same rule
   // as the hospital fee, §3.2.5) — Bank is where vehicle/rent money lives
@@ -203,7 +215,7 @@
     // Parked on the open lot SOUTH of the Showroom — the showroom
     // building itself is blocked, so parking at SHOWROOM_POS would strand
     // the vehicle where nobody can mount it (same fix as server).
-    wallet.vehicles[type] = { fuel: 100, durability: 100, x: SHOWROOM_POS.x, y: SHOWROOM_POS.y + 270 };
+    wallet.vehicles[type] = { fuel: 100, durability: 100, x: SHOWROOM_POS.x + 320, y: SHOWROOM_POS.y + 100 };
     logTx('asset_buy', -spec.price, { asset_type: 'vehicle', asset_code: type });
     saveWallet(); applyToState();
     return { ok: true, vehicleId: type, cash: wallet.cash, bank: wallet.bank };
