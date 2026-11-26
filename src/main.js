@@ -199,6 +199,24 @@
     samplePowerBox: 'assets/prop-powerbox-sample.png',
     sampleStools: 'assets/prop-stools-sample.png',
     sampleTreeBox: 'assets/prop-treebox-sample.png',
+    // Vietnamese Urban & Street Life Props
+    stoolRed: 'assets/urban/props/stool_red.png',
+    stoolBlue: 'assets/urban/props/stool_blue.png',
+    teaTable: 'assets/urban/props/tea_table.png',
+    trashBin: 'assets/urban/sanitation/trash_bin_green.png',
+    trashBag: 'assets/urban/sanitation/trash_bag_black.png',
+    banhMiCart: 'assets/urban/street_food/banh_mi_cart.png',
+    powerPole: 'assets/urban/infrastructure/power_pole_vietnam.png',
+    marketStall: 'assets/urban/market/market_stall_produce.png',
+    // Pixel Vehicles
+    carTaxi: 'assets/urban/vehicles/car_taxi.png',
+    carPolice: 'assets/urban/vehicles/car_police.png',
+    carAmbulance: 'assets/urban/vehicles/car_ambulance.png',
+    carBus: 'assets/urban/vehicles/car_bus.png',
+    carTruck: 'assets/urban/vehicles/car_truck.png',
+    carVendor: 'assets/urban/vehicles/car_vendor.png',
+    carSedan: 'assets/urban/vehicles/car_sedan.png',
+    carSuv: 'assets/urban/vehicles/car_suv.png',
     // M2: *-full.png = transparent full-body sprites for IN-WORLD characters.
     // *-crop.png (portrait crops) are ONLY for the small HUD avatar — never
     // as a moving character (user complaint M1: "sao lại là avatar hình tròn?").
@@ -529,9 +547,10 @@
     cub_red:       'Xe Super Cub (Đỏ cờ)',
     cub_blue:      'Xe Honda Dream (Xanh tím)'
   };
+  var CAR_TYPES = ['car', 'carTaxi', 'carSedan', 'carSuv', 'carBus', 'carTruck', 'carVendor'];
   function spawnTraffic() {
     if (!world) return;
-    var bikeIdx = 0;
+    var bikeIdx = 0, carIdx = 0;
     RoadNet.createTraffic(TRAFFIC_COUNT).forEach(function (v) {
       if (v.kind === 'motorbike') {
         v.bikeType = MOTORBIKE_TYPES[bikeIdx++ % MOTORBIKE_TYPES.length];
@@ -547,12 +566,13 @@
         cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
         return;
       }
-      var tex = TEX[v.kind];
+      v.carType = CAR_TYPES[carIdx++ % CAR_TYPES.length];
+      var tex = TEX[v.carType] || TEX.car;
       if (!tex) return;
       var spr = new PIXI.Sprite(tex);
       spr.anchor.set(0.5, 0.5);
       // chiều dài xe = v.len; giữ nguyên tỉ lệ ảnh
-      var k = v.len / (v.kind === 'car' ? tex.width : tex.height);
+      var k = v.len / tex.width;
       spr.width = tex.width * k; spr.height = tex.height * k;
       world.addChild(spr);
       v.spr = spr;
@@ -869,6 +889,44 @@
     propSprite('car', 4000, 1920, 90);
     propSprite('car', 3900, 1010, 90);
     propSprite('car', 2750, 3300, 90);
+    // Parked specialty vehicles at POIs
+    propSprite('carPolice', 4000, 840, 60);     // Xe cảnh sát đỗ trước Đồn Công An
+    propSprite('carAmbulance', 4125, 1710, 65); // Xe cứu thương đỗ trước Bệnh Viện
+    propSprite('carTruck', 4100, 2980, 70);     // Xe tải hàng đỗ trước Kho Hàng
+    propSprite('carTaxi', 2750, 4320, 55);      // Xe taxi đỗ trước Quán Cà Phê
+
+    // 1. Quán cóc vỉa hè: bàn trà đá + ghế nhựa đỏ/xanh
+    propSprite('teaTable', 2700, 4420, 32);     // Vỉa hè quán cà phê
+    propSprite('stoolRed', 2685, 4420, 16);
+    propSprite('stoolRed', 2715, 4420, 16);
+    propSprite('stoolBlue', 2700, 4405, 16);
+    propSprite('stoolBlue', 2700, 4435, 16);
+
+    propSprite('teaTable', 2760, 2760, 32);     // Góc Đông Nam quảng trường
+    propSprite('stoolRed', 2745, 2760, 16);
+    propSprite('stoolRed', 2775, 2760, 16);
+    propSprite('stoolBlue', 2760, 2745, 16);
+
+    // 2. Xe bánh mì hàng rong vỉa hè
+    propSprite('banhMiCart', 2160, 2760, 44);   // Góc Tây Nam quảng trường
+    propSprite('banhMiCart', 4080, 4120, 44);   // Cổng chợ dân sinh
+
+    // 3. Sạp chợ truyền thống (rau củ quả) tại Chợ Dân Sinh
+    propSprite('marketStall', 4160, 4120, 52);
+    propSprite('marketStall', 4220, 4120, 52);
+
+    // 4. Thùng rác công cộng xanh lá & Túi rác đen vỉa hè
+    propSprite('trashBin', 2110, 2760, 22);
+    propSprite('trashBag', 2125, 2765, 18);
+    propSprite('trashBin', 3200, 1600, 22);     // Cửa hàng tiện lợi
+    propSprite('trashBag', 3215, 1605, 18);
+
+    // 5. Cột điện đô thị Việt Nam (bó dây điện chằng chịt, đèn đường)
+    propSprite('powerPole', 1980, 2010, 32);    // Ngã tư Tây Bắc
+    propSprite('powerPole', 2880, 2010, 32);    // Ngã tư Đông Bắc
+    propSprite('powerPole', 1980, 2850, 32);    // Ngã tư Tây Nam
+    propSprite('powerPole', 2880, 2850, 32);    // Ngã tư Đông Nam
+
     // delivery boxes + bins (decorative): boxes at the warehouse dock,
     // bins near the shop, market, plaza and gardens.
     propSprite('box', 3900, 3200, 40);
