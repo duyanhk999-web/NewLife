@@ -166,6 +166,25 @@
     box: 'assets/v3/prop-box-full.png', dog: 'assets/v3/prop-dog-full.png',
     cat: 'assets/v3/prop-cat-full.png', car: 'assets/v3/prop-car-full.png',
     motorbike: 'assets/v3/prop-motorbike-full.png',
+    // 2.5D Pixel Art Motorbikes (2 models: Scooter & Cub, 3 colors, 3 directions: side, down, up)
+    scooter_white_side: 'assets/vehicles/motorbikes/scooter_white_side.png',
+    scooter_white_down: 'assets/vehicles/motorbikes/scooter_white_down.png',
+    scooter_white_up:   'assets/vehicles/motorbikes/scooter_white_up.png',
+    scooter_brown_side: 'assets/vehicles/motorbikes/scooter_brown_side.png',
+    scooter_brown_down: 'assets/vehicles/motorbikes/scooter_brown_down.png',
+    scooter_brown_up:   'assets/vehicles/motorbikes/scooter_brown_up.png',
+    scooter_red_side:   'assets/vehicles/motorbikes/scooter_red_side.png',
+    scooter_red_down:   'assets/vehicles/motorbikes/scooter_red_down.png',
+    scooter_red_up:     'assets/vehicles/motorbikes/scooter_red_up.png',
+    cub_green_side:     'assets/vehicles/motorbikes/cub_green_side.png',
+    cub_green_down:     'assets/vehicles/motorbikes/cub_green_down.png',
+    cub_green_up:       'assets/vehicles/motorbikes/cub_green_up.png',
+    cub_red_side:       'assets/vehicles/motorbikes/cub_red_side.png',
+    cub_red_down:       'assets/vehicles/motorbikes/cub_red_down.png',
+    cub_red_up:         'assets/vehicles/motorbikes/cub_red_up.png',
+    cub_blue_side:      'assets/vehicles/motorbikes/cub_blue_side.png',
+    cub_blue_down:      'assets/vehicles/motorbikes/cub_blue_down.png',
+    cub_blue_up:        'assets/vehicles/motorbikes/cub_blue_up.png',
     // VEHICLES FIX (2026-11-25): the bicycle had NO image at all (only the
     // motorbike prop existed). FLUX v2, high-angle, keyed out by
     // make_v3_sprites.py — used for the parked owned bike + the ridden bike
@@ -499,9 +518,35 @@
   // Ảnh ô tô có đầu xe quay sang TRÁI, ảnh xe máy có đầu xe quay LÊN.
   var TRAFFIC_COUNT = 20;
   var HEADING_FIX = { car: Math.PI, motorbike: Math.PI / 2 };
+  var MOTORBIKE_TYPES = [
+    'scooter_red', 'cub_green', 'scooter_white', 'cub_red', 'scooter_brown', 'cub_blue'
+  ];
+  var BIKE_NAMES = {
+    scooter_white: 'Xe ga Vision (Trắng)',
+    scooter_brown: 'Xe ga Nouvo (Nâu đồng)',
+    scooter_red:   'Xe ga Lead (Đỏ đô)',
+    cub_green:     'Xe Cub 50 (Xanh rêu)',
+    cub_red:       'Xe Super Cub (Đỏ cờ)',
+    cub_blue:      'Xe Honda Dream (Xanh tím)'
+  };
   function spawnTraffic() {
     if (!world) return;
+    var bikeIdx = 0;
     RoadNet.createTraffic(TRAFFIC_COUNT).forEach(function (v) {
+      if (v.kind === 'motorbike') {
+        v.bikeType = MOTORBIKE_TYPES[bikeIdx++ % MOTORBIKE_TYPES.length];
+        var tex = TEX[v.bikeType + '_down'] || TEX[v.bikeType + '_side'] || TEX.motorbike;
+        if (!tex) return;
+        var spr = new PIXI.Sprite(tex);
+        spr.anchor.set(0.5, 0.5);
+        spr.width = 28; spr.height = 28 * tex.height / tex.width;
+        world.addChild(spr);
+        v.spr = spr;
+        spr.userData = v;
+        traffic.push(v);
+        cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
+        return;
+      }
       var tex = TEX[v.kind];
       if (!tex) return;
       var spr = new PIXI.Sprite(tex);
@@ -531,8 +576,47 @@
     for (var i = 0; i < traffic.length; i++) {
       var v = traffic[i];
       v.spr.position.set(v.x, v.y);
-      v.spr.rotation = v.heading + HEADING_FIX[v.kind];
       v.spr.zIndex = v.y; // y-sorted with the player
+      if (v.kind === 'motorbike') {
+        var h = v.heading;
+        while (h > Math.PI) h -= 2 * Math.PI;
+        while (h < -Math.PI) h += 2 * Math.PI;
+
+        var texKey = v.bikeType || 'cub_red';
+        var sprTex, scaleX = 1, baseW = 32;
+
+        if (h >= -Math.PI / 4 && h < Math.PI / 4) {
+          // Đi sang ĐÔNG (phải) -> nhìn nghiêng lật ngang
+          sprTex = TEX[texKey + '_side'];
+          scaleX = -1;
+          baseW = 44;
+        } else if (h >= Math.PI / 4 && h < 3 * Math.PI / 4) {
+          // Đi sang NAM (xuống) -> nhìn thẳng phía trước
+          sprTex = TEX[texKey + '_down'];
+          scaleX = 1;
+          baseW = 28;
+        } else if (h >= -3 * Math.PI / 4 && h < -Math.PI / 4) {
+          // Đi sang BẮC (lên) -> nhìn từ phía sau
+          sprTex = TEX[texKey + '_up'];
+          scaleX = 1;
+          baseW = 28;
+        } else {
+          // Đi sang TÂY (trái) -> nhìn nghiêng
+          sprTex = TEX[texKey + '_side'];
+          scaleX = 1;
+          baseW = 44;
+        }
+
+        if (sprTex) {
+          if (v.spr.texture !== sprTex) v.spr.texture = sprTex;
+          v.spr.width = baseW;
+          v.spr.height = baseW * sprTex.height / sprTex.width;
+          v.spr.scale.x = scaleX * Math.abs(v.spr.scale.x);
+        }
+        v.spr.rotation = 0; // 2.5D Pixel Art giữ thẳng góc nhìn
+      } else {
+        v.spr.rotation = v.heading + HEADING_FIX[v.kind];
+      }
     }
   }
   var serverClockOffset = 0;
@@ -747,10 +831,10 @@
       cullables.push({ obj: glow, x: lampX - 40, y: lampY - 70, w: 80, h: 80 });
     });
 
-    // parked vehicles (Map v2 §5, decorative): 5 motorbikes in a row at the
-    // showroom, cars at the hospital bay, police car park and motel car park.
-    [3140, 3200, 3260].forEach(function (by) {
-      propSprite('motorbike', 1960, by, 30);
+    // parked vehicles (Map v2 §5, decorative): 3 motorbikes of different models at the showroom
+    var showroomBikes = ['scooter_red_side', 'cub_green_side', 'scooter_white_side'];
+    [3140, 3200, 3260].forEach(function (by, i) {
+      propSprite(showroomBikes[i], 1960, by, 44);
     });
     // VEHICLES FIX (2026-11-25): the OWNED parked vehicles — one labelled
     // container per type (sprite + green ring + "Xe … của bạn" label), shown
@@ -760,13 +844,14 @@
     // theirs, and mounting (80px range) felt like it did nothing.
     ['bicycle', 'motorbike'].forEach(function (id) {
       var c = new PIXI.Container();
-      var tex = TEX[id] || null;
+      var bikeType = playerState.bikeType || 'scooter_red';
+      var tex = id === 'motorbike' ? (TEX[bikeType + '_side'] || TEX.motorbike) : (TEX[id] || null);
       var spr = null;
       if (tex) {
         spr = new PIXI.Sprite(tex);
         spr.anchor.set(0.5, 0.5);
         if (id === 'bicycle') { spr.width = 56; spr.height = 56 * tex.height / tex.width; }
-        else { spr.width = 34; spr.height = 34 * tex.height / tex.width; }
+        else { spr.width = 44; spr.height = 44 * tex.height / tex.width; }
         c.addChild(spr);
       }
       var ring = new PIXI.Graphics();
@@ -1011,7 +1096,18 @@
       var v = vs[id];
       var show = !!(v && v.owned && vs.riding !== id && typeof v.x === 'number' && typeof v.y === 'number');
       node.c.visible = show;
-      if (show) node.c.position.set(v.x, v.y);
+      if (show) {
+        node.c.position.set(v.x, v.y);
+        if (id === 'motorbike' && node.spr) {
+          var bikeType = playerState.bikeType || 'scooter_red';
+          var tex = TEX[bikeType + '_side'] || TEX.motorbike;
+          if (tex && node.spr.texture !== tex) {
+            node.spr.texture = tex;
+            node.spr.width = 44;
+            node.spr.height = 44 * tex.height / tex.width;
+          }
+        }
+      }
     });
   }
   // Ridden vehicle under the player: the bike sprite is a child of the
@@ -1022,15 +1118,55 @@
     if (!rideSpr) return;
     var ridingId = currentRidingId();
     if (!ridingId) { rideSpr.visible = false; return; }
-    var tex = TEX[ridingId] || null;
-    if (!tex) { rideSpr.visible = false; return; }
-    if (rideSpr.texture !== tex) rideSpr.texture = tex;
-    // Aspect-preserving, sized to read at game scale: bicycle is wide
-    // (472x360) -> 56px wide; motorbike is tall (204x360) -> 34px wide,
-    // same as the decorative parked motorbikes.
-    if (ridingId === 'bicycle') { rideSpr.width = 56; rideSpr.height = 56 * tex.height / tex.width; }
-    else { rideSpr.width = 34; rideSpr.height = 34 * tex.height / tex.width; }
-    rideSpr.visible = true;
+    if (ridingId === 'bicycle') {
+      var tex = TEX.bicycle;
+      if (!tex) { rideSpr.visible = false; return; }
+      if (rideSpr.texture !== tex) rideSpr.texture = tex;
+      rideSpr.width = 56; rideSpr.height = 56 * tex.height / tex.width;
+      rideSpr.scale.x = 1;
+      rideSpr.visible = true;
+      return;
+    }
+    // Motorbike: 4-directional 2.5D sprite matching movement direction
+    var bikeType = playerState.bikeType || 'scooter_red';
+    var inp = lastInput;
+    var dir = playerState.rideDir || 'down';
+    if (Math.abs(inp.dx) > 0.1 && Math.abs(inp.dx) >= Math.abs(inp.dy)) {
+      dir = inp.dx > 0 ? 'right' : 'left';
+    } else if (inp.dy > 0.1) {
+      dir = 'down';
+    } else if (inp.dy < -0.1) {
+      dir = 'up';
+    }
+    playerState.rideDir = dir;
+
+    var sprTex, scaleX = 1, baseW = 34;
+    if (dir === 'right') {
+      sprTex = TEX[bikeType + '_side'];
+      scaleX = -1;
+      baseW = 44;
+    } else if (dir === 'left') {
+      sprTex = TEX[bikeType + '_side'];
+      scaleX = 1;
+      baseW = 44;
+    } else if (dir === 'up') {
+      sprTex = TEX[bikeType + '_up'];
+      scaleX = 1;
+      baseW = 28;
+    } else {
+      sprTex = TEX[bikeType + '_down'];
+      scaleX = 1;
+      baseW = 28;
+    }
+    sprTex = sprTex || TEX.motorbike;
+    if (sprTex) {
+      if (rideSpr.texture !== sprTex) rideSpr.texture = sprTex;
+      rideSpr.width = baseW;
+      rideSpr.height = baseW * sprTex.height / sprTex.width;
+      rideSpr.scale.x = scaleX * Math.abs(rideSpr.scale.x);
+      rideSpr.position.set(0, dir === 'up' ? 2 : 8);
+      rideSpr.visible = true;
+    }
   }
   // Contextual LÊN XE / XUỐNG XE DOM button (#rideBtn, bottom centre).
   // Riding -> "XUỐNG XE". On foot near a parked owned vehicle (within the
@@ -2460,6 +2596,21 @@
     if (!textVal) return;
     if (textVal.length > 200) {
       appendChatLog('', '', 'Tin nhắn quá dài (tối đa 200 ký tự).', true);
+      return;
+    }
+    // Lệnh đổi loại xe máy (/xe hoặc /xe <tên>)
+    if (textVal.indexOf('/xe') === 0) {
+      chatEls.input.value = '';
+      var curIdx = MOTORBIKE_TYPES.indexOf(playerState.bikeType || 'scooter_red');
+      var nextType = MOTORBIKE_TYPES[(curIdx + 1) % MOTORBIKE_TYPES.length];
+      var arg = textVal.slice(3).trim();
+      if (arg && MOTORBIKE_TYPES.indexOf(arg) >= 0) nextType = arg;
+      playerState.bikeType = nextType;
+      try { localStorage.setItem('dta_bike_type', nextType); } catch (e) {}
+      var name = BIKE_NAMES[nextType] || nextType;
+      appendChatLog('', '', '🏍 Đã đổi xe máy sang: ' + name + ' (Gõ /xe để đổi sang loại xe tiếp theo).', true);
+      syncRideSprite();
+      syncParkedVehicles();
       return;
     }
     var channel = chatChannel;
