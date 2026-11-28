@@ -849,9 +849,9 @@ class CityRoom extends Room {
     const r = 16; // 32x32 hitbox, SRS §7.3
     let nx = player.x + dx * speed * dt;
     let ny = player.y + dy * speed * dt;
-    if (this._blockedFor(nx, ny, r, client.sessionId)) {
-      if (!this._blockedFor(nx, player.y, r, client.sessionId)) ny = player.y; // slide on X
-      else if (!this._blockedFor(player.x, ny, r, client.sessionId)) nx = player.x; // slide on Y
+    if (this._blockedFor(nx, ny, r, client.sessionId, player.x, player.y)) {
+      if (!this._blockedFor(nx, player.y, r, client.sessionId, player.x, player.y)) ny = player.y; // slide on X
+      else if (!this._blockedFor(player.x, ny, r, client.sessionId, player.x, player.y)) nx = player.x; // slide on Y
       else { nx = player.x; ny = player.y; }
     }
     nx = clamp(nx, 20, 4780); ny = clamp(ny, 20, 4780);
@@ -895,7 +895,13 @@ class CityRoom extends Room {
   // r 16). `selfId` is excluded from the player check (a player never
   // blocks themself). Fainted players still block — they are lying on the
   // ground, walk around them.
-  _blockedFor(x, y, r, selfId) {
+  // Overlap escape (2026-11-28): `cx, cy` is the mover's CURRENT position.
+  // A circle the mover ALREADY overlaps (current distance < r + 16) does
+  // not block — otherwise two players teleported onto the same spot (e.g.
+  // an accident victim landing on someone standing at the hospital spawn)
+  // could never move again: every step stays inside the 32px circle.
+  // Walking INTO a circle from outside is still blocked as before.
+  _blockedFor(x, y, r, selfId, cx, cy) {
     if (blocked(x, y, r)) return true; // buildings + fences + fountain
     if (Props.hitProp(x, y, r)) return true; // trees, lamps, props
     if (this.traffic) {
@@ -903,12 +909,16 @@ class CityRoom extends Room {
         if (RoadNet.hitVehicle(x, y, r, v)) return true;
       }
     }
+    const overlaps = (ox, oy) => cx !== undefined && cy !== undefined
+      && (cx - ox) * (cx - ox) + (cy - oy) * (cy - oy) < (r + 16) * (r + 16);
     for (const n of this.state.npcs.values()) {
+      if (overlaps(n.x, n.y)) continue;
       const dx = x - n.x, dy = y - n.y;
       if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
     }
     for (const [id, p] of this.state.players) {
       if (id === selfId) continue;
+      if (overlaps(p.x, p.y)) continue;
       const dx = x - p.x, dy = y - p.y;
       if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
     }

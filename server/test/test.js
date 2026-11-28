@@ -802,6 +802,40 @@ async function main() {
     const dAB = pAcol && pBcol ? Math.hypot(pAcol.x - pBcol.x, pAcol.y - pBcol.y) : 0;
     check('solid collision: player cannot walk through another player',
       pAcol && pBcol && dAB >= 31 && pAcol.x > 340, `dist=${dAB.toFixed(1)}px`);
+    // Overlap escape (2026-11-28): two players teleported onto the exact
+    // same spot — what a traffic accident does at HOSPITAL_SPAWN when
+    // someone is already standing there — must be able to walk out in ANY
+    // direction. Before the fix every move was blocked on both sides
+    // forever: from distance 0, every step stays inside the 32px circle.
+    // North is capped by the hospital wall (~26px of headroom), the other
+    // three directions are open, so the bar is moved > 20px (bug = 0).
+    const escDirs = [[1, 0, 'east'], [-1, 0, 'west'], [0, 1, 'south'], [0, -1, 'north']];
+    for (const [edx, edy, ename] of escDirs) {
+      await testSet(roomB, { x: 4125, y: 1890, hp: 100 });
+      await testSet(roomA, { x: 4125, y: 1890, hp: 100 });
+      for (let i = 0; i < 10; i++) {
+        roomA.send('move', { seq: ++seq, dx: edx, dy: edy, sprint: false });
+        await sleep(50);
+      }
+      await sleep(200);
+      const pEsc = statePlayer(roomA, roomA.sessionId);
+      const movedEsc = pEsc ? Math.hypot(pEsc.x - 4125, pEsc.y - 1890) : 0;
+      check(`overlap escape: stacked players can walk ${ename} out of each other`,
+        pEsc && movedEsc > 20, `moved=${movedEsc.toFixed(1)}px`);
+    }
+    // The normal case still holds: walking INTO another player from
+    // outside (>= 32px away) is still blocked.
+    await testSet(roomB, { x: 4125, y: 1890, hp: 100 });
+    await testSet(roomA, { x: 4125 - 60, y: 1890, hp: 100 });
+    for (let i = 0; i < 20; i++) {
+      roomA.send('move', { seq: ++seq, dx: 1, dy: 0, sprint: false });
+      await sleep(50);
+    }
+    await sleep(300);
+    const pEsc2 = statePlayer(roomA, roomA.sessionId), pBesc2 = statePlayer(roomA, roomB.sessionId);
+    const dEsc2 = pEsc2 && pBesc2 ? Math.hypot(pEsc2.x - pBesc2.x, pEsc2.y - pBesc2.y) : 0;
+    check('overlap escape: walking into a player from outside is still blocked',
+      pEsc2 && pBesc2 && dEsc2 >= 31 && pEsc2.x > 4125 - 60, `dist=${dEsc2.toFixed(1)}px`);
     // Accident: place A 55px ahead of the fastest car (in front of its
     // nose — well inside the braking distance) and wait for the hit.
     // Retry up to 3 times: the car may turn or stop at a light first.

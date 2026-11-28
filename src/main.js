@@ -107,10 +107,19 @@
   // vehicles (server sim online / local sim offline) + NPCs/animals +
   // other players (circles r 16). `self` is the object being moved (never
   // blocks itself); pass null to check against everyone.
-  function blockedFull(x, y, r, self) {
+  // Overlap escape (2026-11-28): `cx, cy` is the mover's CURRENT position
+  // — same rule as the server's _blockedFor. A circle the mover ALREADY
+  // overlaps (current distance < r + 16) does not block, so two players
+  // stacked on the same spot can walk out of each other; walking INTO a
+  // circle from outside is still blocked as before.
+  function blockedFull(x, y, r, self, cx, cy) {
     if (blocked(x, y, r)) return true;
     if (typeof Props !== 'undefined' && Props.hitProp && Props.hitProp(x, y, r)) return true;
     var i, v, dx, dy;
+    var overlaps = function (ox, oy) {
+      return cx !== undefined && cy !== undefined
+        && (cx - ox) * (cx - ox) + (cy - oy) * (cy - oy) < (r + 16) * (r + 16);
+    };
     for (i = 0; i < traffic.length; i++) {
       v = traffic[i];
       if (RoadNet.hitVehicle(x, y, r, v)) return true;
@@ -118,16 +127,20 @@
     for (i = 0; i < npcs.length; i++) {
       var n = npcs[i];
       if (self && n === self) continue;
+      if (overlaps(n.x, n.y)) continue;
       dx = x - n.x; dy = y - n.y;
       if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
     }
     if (tutorialNpc && self !== tutorialNpc) {
-      dx = x - tutorialNpc.x; dy = y - tutorialNpc.y;
-      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+      if (!overlaps(tutorialNpc.x, tutorialNpc.y)) {
+        dx = x - tutorialNpc.x; dy = y - tutorialNpc.y;
+        if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+      }
     }
     for (i = 0; i < animals.length; i++) {
       var a = animals[i];
       if (self && a === self) continue;
+      if (overlaps(a.x, a.y)) continue;
       dx = x - a.x; dy = y - a.y;
       if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
     }
@@ -136,6 +149,7 @@
       var rp = remotePlayers[ids[i]];
       if (self && rp && rp.playerState === self) continue;
       if (!rp || !rp.playerState) continue;
+      if (overlaps(rp.playerState.x, rp.playerState.y)) continue;
       dx = x - rp.playerState.x; dy = y - rp.playerState.y;
       if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
     }
@@ -2335,12 +2349,13 @@
   }
 
   // ---------- movement / collision ----------
-  function tryMove(x, y, r) {
+  function tryMove(x, y, r, cx, cy) {
     // axis-separated: caller moves one axis at a time. Full solid
     // collision (2026-11-28): map + street props + traffic + NPCs/animals
     // + other players — the same _blockedFor the server enforces, so the
     // client never predicts through an object and gets snapped back.
-    return !blockedFull(x, y, r, null);
+    // `cx, cy` is the mover's current position (overlap escape rule).
+    return !blockedFull(x, y, r, null, cx, cy);
   }
 
   // Current movement input, shared by updatePlayer (local prediction) and
@@ -2410,8 +2425,8 @@
     var ox = playerState.x, oy = playerState.y;
     var nx = playerState.x + input.dx * speed * dt;
     var ny = playerState.y + input.dy * speed * dt;
-    if (tryMove(nx, playerState.y, 16)) playerState.x = nx;
-    if (tryMove(playerState.x, ny, 16)) playerState.y = ny;
+    if (tryMove(nx, playerState.y, 16, playerState.x, playerState.y)) playerState.x = nx;
+    if (tryMove(playerState.x, ny, 16, playerState.x, playerState.y)) playerState.y = ny;
     playerState.x = Math.max(20, Math.min(MAP_W - 20, playerState.x));
     playerState.y = Math.max(20, Math.min(MAP_H - 20, playerState.y));
     // M4 (§8.1, offline): drain fuel/durability by distance travelled.
