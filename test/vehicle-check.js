@@ -179,6 +179,65 @@ check('online: vehicle status requested on join (returning players)',
   /ask for the owned-vehicle status too/.test(mainSrc) &&
   (mainSrc.match(/NetClient\.sendVehicle\('status', \{\}\)/g) || []).length >= 2);
 
+// ---- 5. traffic roster: every server-assigned type must be renderable ----
+// Bug 2026-11-28: shared/roadnet.js MOTORBIKE_TYPES listed cub_white /
+// scooter_blue, which have NO side/down/up textures in the client's TEX
+// table and NO PNGs. The server assigns bike types from RoadNet, so 4 of
+// 10 traffic bikes fell back to TEX.motorbike (prop-motorbike-full.png —
+// byte-identical to the red scooter rear view, vertical) in EVERY
+// direction: a red bike sliding sideways on horizontal roads, while the
+// bike next to it in the same lane rendered correctly. The client's
+// renderTrafficVehicle() skips the texture swap when TEX[<type>_<dir>]
+// is undefined, so a missing type is stuck on the fallback forever.
+// This section locks the invariant: RoadNet lists == main.js lists, and
+// every listed type/color has all 3 direction textures + PNGs.
+var R = require(path.join(ROOT, 'shared/roadnet.js'));
+var texKeys = {};
+mainSrc.replace(/^\s*([A-Za-z0-9_]+_(?:side|down|up))\s*:/gm, function (_, k) { texKeys[k] = true; });
+function sameSet(a, b) {
+  return a.length === b.length && a.slice().sort().join(',') === b.slice().sort().join(',');
+}
+var mainBikeTypes = mainSrc.match(/var MOTORBIKE_TYPES = \[([\s\S]*?)\];/)[1]
+  .match(/'([^']+)'/g).map(function (s) { return s.replace(/'/g, ''); });
+var mainCarColors = mainSrc.match(/var CAR_COLORS = \[([^\]]*)\];/)[1]
+  .match(/'([^']+)'/g).map(function (s) { return s.replace(/'/g, ''); });
+check('RoadNet.MOTORBIKE_TYPES matches main.js MOTORBIKE_TYPES (same set)',
+  sameSet(R.MOTORBIKE_TYPES, mainBikeTypes),
+  'roadnet=[' + R.MOTORBIKE_TYPES.join(',') + '] main=[' + mainBikeTypes.join(',') + ']');
+check('RoadNet.CAR_COLORS matches main.js CAR_COLORS (same set)',
+  sameSet(R.CAR_COLORS, mainCarColors),
+  'roadnet=[' + R.CAR_COLORS.join(',') + '] main=[' + mainCarColors.join(',') + ']');
+R.MOTORBIKE_TYPES.forEach(function (t) {
+  var missing = ['side', 'down', 'up'].filter(function (d) { return !texKeys[t + '_' + d]; });
+  check('traffic bike type ' + t + ' has side/down/up in the TEX table', !missing.length, missing.join(',') || 'ok');
+  ['side', 'down', 'up'].forEach(function (d) {
+    var dims = pngDims('assets/vehicles/motorbikes/' + t + '_' + d + '.png');
+    var okAspect = !!dims && (d === 'side' ? dims.w > dims.h : dims.h > dims.w);
+    check('traffic bike PNG ' + t + '_' + d + ' exists, ' + (d === 'side' ? 'wide' : 'tall'),
+      okAspect, dims ? dims.w + 'x' + dims.h : 'missing');
+  });
+});
+R.CAR_COLORS.forEach(function (c) {
+  var missing = ['side', 'down', 'up'].filter(function (d) { return !texKeys['car_' + c + '_' + d]; });
+  check('traffic car color ' + c + ' has side/down/up in the TEX table', !missing.length, missing.join(',') || 'ok');
+  ['side', 'down', 'up'].forEach(function (d) {
+    var dims = pngDims('assets/vehicles/cars/car_' + c + '_' + d + '.png');
+    // Cars are near-square from the front/rear (34x35, 52x51) but clearly
+    // wide from the side (66x34, 100x54): side must be wide, down/up must
+    // NOT be wide (a wide down/up would be a side-view image misfiled).
+    var ratio = dims ? dims.w / dims.h : 0;
+    var okAspect = !!dims && (d === 'side' ? ratio > 1.2 : ratio >= 0.8 && ratio <= 1.25);
+    check('traffic car PNG car_' + c + '_' + d + ' exists, ' + (d === 'side' ? 'wide' : 'near-square'),
+      okAspect, dims ? dims.w + 'x' + dims.h : 'missing');
+  });
+});
+// The fallback itself must stay a VERTICAL bike image (it is the last
+// resort when a type is missing — its orientation is what a broken type
+// shows in every direction, so a horizontal fallback would hide the bug
+// differently, not fix it).
+check('fallback TEX.motorbike is a vertical bike image (tall, not wide)',
+  !!motoDims && motoDims.h > motoDims.w, motoDims && motoDims.w + 'x' + motoDims.h);
+
 // ---- summary ----------------------------------------------------------------
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

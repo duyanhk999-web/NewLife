@@ -102,6 +102,37 @@ check('người đi bộ vẫn qua đường được', crossings > 100, crossin
   check('seed ' + seed + ': không kẹt xe vĩnh viễn', maxIdle < 90000, 'dừng lâu nhất ' + (maxIdle / 1000).toFixed(0) + 's');
 });
 
+// ---- hướng sprite khớp hướng chạy (bug 2026-11-28) ----
+// Xe chạy ngang đường mà hiện sprite dọc (hoặc ngược lại) là xe trượt
+// ngang 90° so với hướng đi. Mô phỏng 5 phút với seed cố định của game
+// và so sánh heading của sim với hướng dịch chuyển thực tế từng bước:
+// chênh lệch > 45° là sai thật (lúc xe đang rẽ, heading và dịch chuyển
+// chỉ lệch nhau tối đa ~5° khi đi qua ranh giới 45° của 4 góc phần tư).
+// (Lỗi 2026-11-28 thực ra KHÔNG nằm ở sim này mà ở danh sách loại xe
+// của server thiếu texture — xem test/vehicle-check.js §5 — nhưng check
+// này khóa hướng còn lại để lần sau phân biệt được ngay.)
+var simCars = R.createTraffic(R.TRAFFIC_COUNT, R.mulberry32(R.TRAFFIC_SEED));
+var prevPos = simCars.map(function (v) { return { x: v.x, y: v.y }; });
+var worstDiff = 0, worstAt = null, orientSteps = 0;
+for (var os = 0; os < 6000; os++) {
+  now += 50;
+  R.stepTraffic(simCars, dt, now, []);
+  simCars.forEach(function (v, k) {
+    var dx = v.x - prevPos[k].x, dy = v.y - prevPos[k].y;
+    prevPos[k].x = v.x; prevPos[k].y = v.y;
+    if (Math.hypot(dx, dy) < 0.5) return; // xe đang đứng: không có hướng
+    orientSteps++;
+    var disp = Math.atan2(dy, dx), diff = Math.abs(v.heading - disp);
+    while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI);
+    if (diff > worstDiff) { worstDiff = diff; worstAt = { id: v.id, kind: v.kind, step: os }; }
+  });
+}
+check('heading của xe luôn khớp hướng dịch chuyển (lệch tối đa <= 45°)',
+  worstDiff <= Math.PI / 4,
+  'lệch nhất ' + (worstDiff * 180 / Math.PI).toFixed(1) + '° ' +
+  (worstAt ? ('(xe ' + worstAt.id + ' ' + worstAt.kind + ', bước ' + worstAt.step + ')') : '') +
+  ', ' + orientSteps + ' bước xe đang chạy');
+
 // ---- xe nhường người đứng giữa đường ----
 var one = R.createTraffic(1, rng(5))[0];
 var ped = { x: one.x + Math.cos(one.heading) * 150, y: one.y + Math.sin(one.heading) * 150 };

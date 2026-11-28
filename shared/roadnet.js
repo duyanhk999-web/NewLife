@@ -271,14 +271,20 @@
   // Traffic roster (shared by the client offline sim and the server
   // authoritative sim — keep CAR_COLORS / MOTORBIKE_TYPES in sync with the
   // same-named lists in src/main.js, which the client uses for its offline
-  // sim and the bike-type cycler).
+  // sim and the bike-type cycler. EVERY type listed here MUST have
+  // <type>_side / _down / _up textures in the client's TEX table AND the
+  // PNGs under assets/vehicles/motorbikes/ — otherwise the client falls
+  // back to TEX.motorbike (a vertical red rear view) for that type in ALL
+  // directions: the bike slides sideways on horizontal roads (bug
+  // 2026-11-28: cub_white / scooter_blue had no textures, so 4 of 10
+  // traffic bikes rendered as a red bike seen from behind, permanently).
+  // test/vehicle-check.js locks this invariant in.
   var TRAFFIC_COUNT = 20;
   var TRAFFIC_SEED = 20261128; // fixed seed: the server sim and the client's
   // offline sim create the same traffic layout (same cars, same places).
   var CAR_COLORS = ['red', 'black', 'navy', 'taxi2', 'bus'];
   var MOTORBIKE_TYPES = [
-    'cub_blue', 'cub_red', 'cub_white',
-    'scooter_blue', 'scooter_red', 'scooter_white'
+    'scooter_red', 'cub_green', 'scooter_white', 'cub_red', 'scooter_brown', 'cub_blue'
   ];
   var SIZE = { car: 100, motorbike: 56 };
   var APPROACH_AXIS = function (a, b) { return a.y === b.y ? 'h' : 'v'; };
