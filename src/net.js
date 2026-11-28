@@ -86,6 +86,9 @@
     _reconnectDeadline: 0,
     _reconnectTimer: null,
     _lastJoinOptions: null,
+    // LAG FIX: Colyseus 0.15 reconnection token — resume the SAME session
+    // after a drop (server allowReconnection 30 s). Set on every attach.
+    _reconnectionToken: null,
 
     /* Create the Colyseus client. Resolves {ok:true} or {ok:false, reason}. */
     connect: function (serverUrl) {
@@ -103,7 +106,8 @@
     },
 
     /* Join (or create) a room. Resolves {ok:true, sessionId} or {ok:false, reason}.
-       10 s timeout: allows Railway cold-start while never blocking offline fallback. */
+       20 s timeout: Railway cold-start (wake + migrations at boot) often
+       exceeds 10 s; 20 s still never blocks offline fallback forever. */
     joinRoom: function (roomName, options) {
       var self = this;
       self._lastJoinOptions = { roomName: roomName, options: options || {} };
@@ -113,8 +117,8 @@
         var timer = setTimeout(function () {
           if (done) return;
           done = true;
-          resolve({ ok: false, reason: 'timeout-10s' });
-        }, 10000);
+          resolve({ ok: false, reason: 'timeout-20s' });
+        }, 20000);
         var p;
         try {
           p = self.client.joinOrCreate(roomName || 'city', options || {});
@@ -142,6 +146,9 @@
       var self = this;
       self._leavingIntentionally = true;
       self._stopReconnectLoop();
+      // LAG FIX: intentional leave invalidates the stored token — a later
+      // manual rejoin must be a fresh session, never a stale resume.
+      self._reconnectionToken = null;
       if (self.room) {
         try { self.room.leave(); } catch (e) { /* ignore */ }
       }
@@ -243,6 +250,10 @@
       var self = this;
       self.room = room;
       self.sessionId = room.sessionId;
+      // LAG FIX: 0.15 reconnection token — resume the SAME session after a
+      // drop (server allowReconnection 30 s). Stored on every attach, so a
+      // successful token reconnect refreshes it for the next drop.
+      self._reconnectionToken = room.reconnectionToken || null;
       self.connected = true;
       self._leavingIntentionally = false;
 
@@ -335,16 +346,55 @@
           self._call('onReconnectFailed');
           return;
         }
-        var last = self._lastJoinOptions || { roomName: 'city', options: {} };
-        self.joinRoom(last.roomName, last.options).then(function (res) {
+        // LAG FIX: try to resume the SAME session first (token reconnect).
+        // Falls back to a fresh join when there is no token, the server
+        // has no allowReconnection (old build), or the 30 s window
+        // expired — so behaviour on an old server is unchanged.
+        var fallbackJoin = function () {
           if (!self._reconnecting) return;
-          if (res.ok) {
+          var last = self._lastJoinOptions || { roomName: 'city', options: {} };
+          self.joinRoom(last.roomName, last.options).then(function (res) {
+            if (!self._reconnecting) return;
+            if (res.ok) {
+              self._reconnecting = false;
+              self._call('onReconnected');
+            } else {
+              self._reconnectTimer = setTimeout(attempt, RECONNECT_RETRY_MS);
+            }
+          });
+        };
+        var token = self._reconnectionToken;
+        if (token && self.client && typeof self.client.reconnect === 'function') {
+          var settled = false;
+          var rtimer = setTimeout(function () {
+            if (settled) return;
+            settled = true;
+            fallbackJoin();
+          }, 10000);
+          var rp = null;
+          try { rp = self.client.reconnect(token); } catch (e) { rp = null; }
+          if (!rp || typeof rp.then !== 'function') {
+            clearTimeout(rtimer);
+            fallbackJoin();
+            return;
+          }
+          rp.then(function (room) {
+            if (settled) { try { room.leave(); } catch (e) { /* late resolve, drop it */ } return; }
+            settled = true;
+            clearTimeout(rtimer);
+            if (!self._reconnecting) { try { room.leave(); } catch (e) { /* reconnect loop stopped */ } return; }
+            self._attachRoom(room);
             self._reconnecting = false;
             self._call('onReconnected');
-          } else {
-            self._reconnectTimer = setTimeout(attempt, RECONNECT_RETRY_MS);
-          }
-        });
+          }).catch(function () {
+            if (settled) return;
+            settled = true;
+            clearTimeout(rtimer);
+            fallbackJoin();
+          });
+          return;
+        }
+        fallbackJoin();
       };
       self._reconnectTimer = setTimeout(attempt, RECONNECT_RETRY_MS);
     },

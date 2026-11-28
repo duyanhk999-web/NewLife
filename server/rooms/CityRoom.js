@@ -403,6 +403,20 @@ class CityRoom extends Room {
   }
 
   async onLeave(client, consented) {
+    // LAG FIX (Colyseus 0.15): a dropped (not consented) client gets 30 s
+    // to resume the SAME session — position, cash, name, vehicles, motel
+    // and shipper order all survive a brief network drop instead of the
+    // player respawning at the plaza with 0đ. Cleanup below runs only
+    // when the client consented to leave or the 30 s window expires.
+    if (!consented) {
+      try {
+        await this.allowReconnection(client, 30);
+        console.log(`[city] reconnected ${client.sessionId}`);
+        return;
+      } catch (e) {
+        // Reconnection window expired — fall through to cleanup.
+      }
+    }
     // M4: end any taxi ride involving the leaver — a passenger who leaves
     // strands the driver (no fare: the trip never finished), a driver who
     // leaves strands the passenger. The vehicle stays parked where the
@@ -713,7 +727,13 @@ class CityRoom extends Room {
     // exceed maxSpeed * dt; if the client was idle (no move for >250 ms),
     // treat the first step as one 50 ms frame instead of jumping 0.5 s.
     const rawDt = (now - data.lastMoveAt) / 1000;
-    const dt = rawDt > 0.25 ? 0.05 : clamp(rawDt, 0, 0.25);
+    // LAG FIX: floor dt at 1 frame (rate limit is 30 move/s). Without the
+    // floor, moves arriving in a burst after a lag spike have rawDt ≈ 0
+    // so the player barely moves server-side while the client keeps
+    // predicting forward — then syncSelf snaps them back (rubber-band).
+    // A client spamming 30 move/s still cannot exceed nominal speed
+    // (30 × speed × 1/30 = speed), so the anti-speed-hack check is intact.
+    const dt = rawDt > 0.25 ? 0.05 : clamp(rawDt, 1 / 30, 0.25);
     data.lastMoveAt = now;
 
     // 3. Stamina: sprint blocked below 10 (fall back to walk). Sprint is

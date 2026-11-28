@@ -130,8 +130,11 @@ function layoutAt(W, H) {
 
 // ---- clock day number (fix 2026-11-25: clock showed "08:56 • Ngày" with
 // no day number — worldTime wrapped every 1440 min but nothing counted days)
+// LAG FIX (2026-11-28): clock text is now assigned via the cached
+// setHudText() helper instead of a direct .text assignment every frame —
+// the displayed string is unchanged, so match the helper call.
 check('clock text shows the day number (Ngày N / Đêm N)',
-  /clockT\.text = clockStr \+ \(isNight \? '  •  Đêm ' : '  •  Ngày '\) \+ worldDay;/.test(mainSrc));
+  /setHudText\(hudRefs\.clockT, 'clock', clockStr \+ \(isNight \? '  •  Đêm ' : '  •  Ngày '\) \+ worldDay\)/.test(mainSrc));
 check('worldDay declared, starts at 1', /var worldDay = 1;/.test(mainSrc));
 (function () {
   // simulate the exact wrap logic from main.js (offline + online)

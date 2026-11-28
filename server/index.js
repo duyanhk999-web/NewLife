@@ -47,7 +47,11 @@ function start(port) {
   });
 
   const gameServer = new Server({
-    transport: new WebSocketTransport({ server: httpServer }),
+    // LAG FIX: tolerate ~12 s of silence before dropping a session
+    // (default pingMaxRetries 2 ≈ 6 s). Mobile/VPN hiccups shorter than
+    // that no longer kill the session; a truly dead client is still
+    // dropped, and the room's allowReconnection(30) covers the gap.
+    transport: new WebSocketTransport({ server: httpServer, pingInterval: 3000, pingMaxRetries: 4 }),
   });
   gameServer.define('city', CityRoom);
 
