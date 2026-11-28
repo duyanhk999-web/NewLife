@@ -305,26 +305,38 @@
     // left, from the sprite-sheet-gen pipeline. The 20 PNGs are uploaded
     // separately (binary); until they land, each missing file loads as null
     // and cô ba renders as the M0 code-drawn person — the game never breaks.
-    coba_stand_0: 'assets/characters/coba/stand_0.png',
-    coba_stand_1: 'assets/characters/coba/stand_1.png',
-    coba_stand_2: 'assets/characters/coba/stand_2.png',
-    coba_stand_3: 'assets/characters/coba/stand_3.png',
-    coba_walk_0: 'assets/characters/coba/walk_0.png',
-    coba_walk_1: 'assets/characters/coba/walk_1.png',
-    coba_walk_2: 'assets/characters/coba/walk_2.png',
-    coba_walk_3: 'assets/characters/coba/walk_3.png',
-    coba_run_0: 'assets/characters/coba/run_0.png',
-    coba_run_1: 'assets/characters/coba/run_1.png',
-    coba_run_2: 'assets/characters/coba/run_2.png',
-    coba_run_3: 'assets/characters/coba/run_3.png',
-    coba_ride_0: 'assets/characters/coba/ride_0.png',
-    coba_ride_1: 'assets/characters/coba/ride_1.png',
-    coba_ride_2: 'assets/characters/coba/ride_2.png',
-    coba_ride_3: 'assets/characters/coba/ride_3.png',
-    coba_fall_0: 'assets/characters/coba/fall_0.png',
-    coba_fall_1: 'assets/characters/coba/fall_1.png',
-    coba_fall_2: 'assets/characters/coba/fall_2.png',
-    coba_fall_3: 'assets/characters/coba/fall_3.png'
+    // Cô Ba Sài Gòn v2 (2026-11-28): 12 direction-aware frames in
+    // assets/characters/coba-v2/ (CHARACTER ASSET SPEC v2: stand 3 angles,
+    // walk 3 angles x 2 steps, fall 3 angles). The 20 v1 side-only frames
+    // under assets/characters/coba/ are orphaned (the connector cannot
+    // delete files) — they are no longer loaded.
+    coba2_stand_front: 'assets/characters/coba-v2/stand_front.png',
+    coba2_stand_side: 'assets/characters/coba-v2/stand_side.png',
+    coba2_stand_back: 'assets/characters/coba-v2/stand_back.png',
+    coba2_walk_front_0: 'assets/characters/coba-v2/walk_front_0.png',
+    coba2_walk_front_1: 'assets/characters/coba-v2/walk_front_1.png',
+    coba2_walk_side_0: 'assets/characters/coba-v2/walk_side_0.png',
+    coba2_walk_side_1: 'assets/characters/coba-v2/walk_side_1.png',
+    coba2_walk_back_0: 'assets/characters/coba-v2/walk_back_0.png',
+    coba2_walk_back_1: 'assets/characters/coba-v2/walk_back_1.png',
+    coba2_fall_front: 'assets/characters/coba-v2/fall_front.png',
+    coba2_fall_side: 'assets/characters/coba-v2/fall_side.png',
+    coba2_fall_back: 'assets/characters/coba-v2/fall_back.png',
+    // Player action frames (2026-11-28): 3 rows x 4 frames, side view facing
+    // left, from assets/characters/player/ (sprite-sheet-gen pipeline).
+    // No stand row — idle keeps the front-view heroFull sprite.
+    player_walk_0: 'assets/characters/player/walk_0.png',
+    player_walk_1: 'assets/characters/player/walk_1.png',
+    player_walk_2: 'assets/characters/player/walk_2.png',
+    player_walk_3: 'assets/characters/player/walk_3.png',
+    player_run_0: 'assets/characters/player/run_0.png',
+    player_run_1: 'assets/characters/player/run_1.png',
+    player_run_2: 'assets/characters/player/run_2.png',
+    player_run_3: 'assets/characters/player/run_3.png',
+    player_ride_0: 'assets/characters/player/ride_0.png',
+    player_ride_1: 'assets/characters/player/ride_1.png',
+    player_ride_2: 'assets/characters/player/ride_2.png',
+    player_ride_3: 'assets/characters/player/ride_3.png'
   };
   var FULL_TEX = { hero: 'heroFull', citizen: 'heroFull', guide: 'taxiFull', shipper: 'shipperFull', bread: 'breadFull', taxi: 'taxiFull', police: 'policeFull', thug: 'thugFull', student: 'studentFull' };
   // Building sprite per id (Map v2 §6): roof crops where FLUX drew a 3/4
@@ -358,7 +370,7 @@
   // ---------- app ----------
   var app, world, hud, nightOverlay, startOverlay;
   var player, playerGfx;
-  var npcs = [], tutorialNpc = null, cobaNpc = null; // cobaNpc: Cô Ba Sài Gòn walker (see COBA_FRAMES)
+  var npcs = [], tutorialNpc = null, cobaNpc = null; // cobaNpc: Cô Ba Sài Gòn walker (see COBA2_FRAMES)
   var animals = []; // Map v2 §7: dogs + cats, visual-only wanderers (no gameplay)
   var traffic = []; // 2026-11-25: ambient moving cars/motorbikes on the roads (visual only)
   // Server-authoritative traffic (2026-11-28): online, cars come from
@@ -418,6 +430,11 @@
   // the vehicle sprite under the player; parkedVehicleNodes holds one
   // labelled container per vehicle type for the parked owned vehicles.
   var rideSpr = null;
+  // Player action frames (2026-11-28): { spr, animState, animFrame,
+  // animDist } for the local player; spr is set in buildWorld (null when
+  // the M0 fallback drew instead). Remote hero-avatar players get their
+  // own copy on the entry (see createRemotePlayer).
+  var playerAnim = { spr: null, animState: 'idle', animFrame: 0, animDist: 0 };
   var parkedVehicleNodes = {}; // id -> {c, spr}
   var radialTarget = null; // {kind, name, x, y, npc}
   var bubbleTimer = null;
@@ -478,65 +495,158 @@
   var WALKER_PERSONAS = ['tung', 'lan', 'cong', 'ty', 'mai'];
   var NPC_NAMES = ['An', 'Bình', 'Chi', 'Dũng', 'Hà', 'Khánh', 'Linh', 'Minh', 'Ngọc', 'Phúc', 'Thu', 'Tuấn'];
   var NPC_COLORS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0x1abc9c, 0xfd79a8, 0x00b894, 0x6c5ce7, 0xd63031, 0x0984e3, 0xe17055];
-  // Cô Ba Sài Gòn (2026-11-28): an animated walker NPC — 5 action rows x 4
-  // frames, side view facing left, from assets/characters/coba/ (the
-  // sprite-sheet-gen pipeline: one standing frame first, then a 5x4 sheet,
-  // sliced + decontaminated). The frames load like every other texture
-  // (per-file try/catch in loadTextures): a 404 leaves TEX[k] null and the
-  // animator keeps the current texture, so this code is safe to ship
-  // BEFORE the 20 PNGs are uploaded — until they land, cô ba renders as
-  // the M0 code-drawn person (makeFullBody fallback) and animates nothing.
-  var COBA_FRAMES = {
-    stand: ['coba_stand_0', 'coba_stand_1', 'coba_stand_2', 'coba_stand_3'],
-    walk: ['coba_walk_0', 'coba_walk_1', 'coba_walk_2', 'coba_walk_3'],
-    run: ['coba_run_0', 'coba_run_1', 'coba_run_2', 'coba_run_3'],
-    ride: ['coba_ride_0', 'coba_ride_1', 'coba_ride_2', 'coba_ride_3'],
-    fall: ['coba_fall_0', 'coba_fall_1', 'coba_fall_2', 'coba_fall_3']
+  // Cô Ba Sài Gòn v2 (2026-11-28): a DIRECTION-AWARE animated walker NPC —
+  // 12 frames in assets/characters/coba-v2/ (CHARACTER ASSET SPEC v2:
+  // stand 3 angles, walk 3 angles x 2 steps, fall 3 angles; side view
+  // flipped in code for the other direction). Replaces the v1 5-row
+  // side-only animator (stand/walk/run/ride/fall x4): run/ride are dropped
+  // (she walks at 90 px/s so run never triggers; no NPC rides a bike).
+  // Walk steps advance by DISTANCE traveled (~14px/step), not wall-clock,
+  // so her feet match ground speed and stop when she pauses. The frames
+  // load like every other texture (per-file try/catch in loadTextures):
+  // a 404 leaves TEX[k] null and the animator keeps the current texture,
+  // so this code is safe even if a PNG is missing — until they land, cô ba
+  // renders as the M0 code-drawn person (makeFullBody fallback) and
+  // animates nothing.
+  var COBA2_FRAMES = {
+    stand: { front: 'coba2_stand_front', side: 'coba2_stand_side', back: 'coba2_stand_back' },
+    walk: {
+      front: ['coba2_walk_front_0', 'coba2_walk_front_1'],
+      side: ['coba2_walk_side_0', 'coba2_walk_side_1'],
+      back: ['coba2_walk_back_0', 'coba2_walk_back_1']
+    },
+    fall: { front: 'coba2_fall_front', side: 'coba2_fall_side', back: 'coba2_fall_back' }
   };
-  var COBA_FRAME_MS = { stand: 200, walk: 150, run: 100, ride: 150, fall: 750 };
-  var COBA_RUN_SPEED = 120; // px/s: faster than this the walk becomes a run
-  // Pure state selection (extracted by test/coba-check.js). Priority:
-  // knocked down > riding > fast > moving > idle. The ride state has no
-  // live trigger yet (no NPC rides a motorbike in the game today — the
-  // traffic bikes have no riders); n.riding is the hook for it.
-  function cobaAnimState(down, riding, moving, speed) {
-    if (down) return 'fall';
-    if (riding) return 'ride';
-    if (moving && speed > COBA_RUN_SPEED) return 'run';
-    if (moving) return 'walk';
-    return 'stand';
+  var COBA_STEP_PX = 14; // distance-based stepping: one walk step per ~14px traveled
+  // Pure facing selection (extracted by test/coba-check.js): dominant
+  // movement direction — up -> back view, down -> front view, horizontal
+  // -> side view. An exact tie (|dx| == |dy|) counts as horizontal.
+  function cobaFacing(dx, dy) {
+    if (Math.abs(dy) > Math.abs(dx)) return dy < 0 ? 'back' : 'front';
+    return 'side';
   }
-  // Advance cô ba's animation one tick and swap the inner sprite texture.
-  // n.cobaSpr is null while the M0 fallback drew instead (no PNGs yet) —
-  // then this is a no-op. A null frame texture is skipped, never applied.
-  function updateCobaAnim(n, dt, moving, speed) {
+  // Pure state selection (extracted by test/coba-check.js). States are
+  // '<motion>_<view>': stand/walk/fall x front/side/back. While down, the
+  // view freezes at the facing she had when knocked down (lastFacing);
+  // idle keeps the last facing too.
+  function cobaAnimState(down, moving, dx, dy, lastFacing) {
+    if (down) return 'fall_' + lastFacing;
+    if (!moving) return 'stand_' + lastFacing;
+    return 'walk_' + cobaFacing(dx, dy);
+  }
+  // Advance cô ba's animation one tick: swap the inner sprite texture and
+  // own her flip (the generic walker flip in updateNPCs is skipped for
+  // her). `dx, dy` is this tick's actual displacement in px. n.cobaSpr is
+  // null while the M0 fallback drew instead — then this is a no-op. A null
+  // frame texture is skipped, never applied. Walk is a 2-step cycle
+  // (walk_*_0 <-> walk_*_1) advanced by distance; stand/fall are single
+  // frames per view and hold.
+  function updateCobaAnim(n, dt, dx, dy) {
     if (!n.cobaSpr) return;
     var down = !!(n.downUntil && Date.now() < n.downUntil);
-    var state = cobaAnimState(down, !!n.riding, moving, speed);
+    var moved = Math.hypot(dx, dy);
+    var moving = moved > 0.5;
+    if (!down && moving) n.facing = cobaFacing(dx, dy);
+    var state = cobaAnimState(down, moving, dx, dy, n.facing);
     if (state !== n.animState) {
-      n.animState = state; n.animFrame = 0; n.animTime = 0;
+      n.animState = state; n.animFrame = 0; n.animDist = 0;
       cobaApplyFrame(n);
     }
-    n.animTime += dt * 1000;
-    var step = COBA_FRAME_MS[state];
-    if (n.animTime >= step) {
-      n.animTime = 0;
-      var frames = COBA_FRAMES[state];
-      // fall plays once and holds the last frame (lying flat) while down;
-      // the other states loop.
-      if (state === 'fall') n.animFrame = Math.min(n.animFrame + 1, frames.length - 1);
-      else n.animFrame = (n.animFrame + 1) % frames.length;
-      cobaApplyFrame(n);
+    if (state.indexOf('walk_') === 0) {
+      n.animDist += moved;
+      while (n.animDist >= COBA_STEP_PX) {
+        n.animDist -= COBA_STEP_PX;
+        n.animFrame = (n.animFrame + 1) % 2;
+        cobaApplyFrame(n);
+      }
+    }
+    // Flip the inner face container (dog-streak rule: never the sprite
+    // itself). The side view faces LEFT as drawn: moving left shows it as
+    // drawn (+1), moving right mirrors it (-1). Front/back views are
+    // symmetric and always show as drawn (+1); while idle the last flip
+    // is kept for the side view. While down the flip is frozen with the
+    // rest of her pose.
+    if (!down) {
+      var face = n.face || n.container;
+      if (n.facing === 'side') {
+        if (dx < -0.1) face.scale.x = 1;
+        else if (dx > 0.1) face.scale.x = -1;
+      } else {
+        face.scale.x = 1;
+      }
     }
   }
   function cobaApplyFrame(n) {
-    var tex = TEX[COBA_FRAMES[n.animState][n.animFrame]];
+    var parts = n.animState.split('_'); // e.g. ['walk', 'side']
+    var entry = COBA2_FRAMES[parts[0]][parts[1]];
+    var key = Array.isArray(entry) ? entry[n.animFrame] : entry;
+    var tex = TEX[key];
     if (!tex) return;
     if (n.cobaSpr.texture !== tex) n.cobaSpr.texture = tex;
-    // Frames differ slightly in height (stand 400, run 367): re-apply the
-    // 40px world height so the swap never changes her rendered size.
+    // Frames are near-square canvases (stand ~880x870, walk ~633x634,
+    // fall ~893x908 with the lying figure horizontal inside): re-apply
+    // the 40px world height so the swap never changes her rendered size.
     n.cobaSpr.height = CHAR_H;
     n.cobaSpr.width = CHAR_H * tex.width / tex.height;
+  }
+  // Player action frames (2026-11-28): 3 rows x 4 frames, side view facing
+  // left, from assets/characters/player/ (sprite-sheet-gen pipeline: same
+  // character as the standing reference, sliced + decontaminated). No stand
+  // row — idle keeps the front-view heroFull sprite, as does pure up/down
+  // movement. Same structure as the cô ba animator above, minus the fall
+  // state (the player has no fall frames; fainting restores heroFull).
+  // The frames load like every other texture (per-file try/catch in
+  // loadTextures): a 404 leaves TEX[k] null and the animator keeps the
+  // current texture, so this code is safe even if a PNG is missing.
+  var PLAYER_FRAMES = {
+    walk: ['player_walk_0', 'player_walk_1', 'player_walk_2', 'player_walk_3'],
+    run: ['player_run_0', 'player_run_1', 'player_run_2', 'player_run_3'],
+    ride: ['player_ride_0', 'player_ride_1', 'player_ride_2', 'player_ride_3']
+  };
+  var PLAYER_STEP_PX = 14; // distance-based stepping: one frame per ~14px traveled
+  var PLAYER_RUN_SPEED = 240; // px/s: remotes faster than this are sprinting (walk 180, sprint 300)
+  // Pure state selection (extracted by test/player-check.js). Priority:
+  // riding > sprinting > moving > idle. `horizontal` is false for pure
+  // up/down movement and idle — those keep the front-view sprite.
+  function playerAnimState(riding, sprinting, moving, horizontal) {
+    if (riding) return 'ride';
+    if (!moving || !horizontal) return 'idle';
+    if (sprinting) return 'run';
+    return 'walk';
+  }
+  // Advance one tick and swap the inner sprite texture. `t` is
+  // { spr, animState, animFrame, animDist } — the local player's
+  // playerAnim, or a remote hero-avatar entry's copy. `dist` is this
+  // tick's actual displacement in px. `t.spr` is null while the M0
+  // fallback drew instead — then this is a no-op. A null frame texture
+  // is skipped, never applied. 'idle' restores heroFull. Frames advance
+  // by DISTANCE traveled (~14px/frame), not wall-clock, so the feet
+  // match ground speed and stop when the player pauses (same rule as
+  // the cô ba v2 animator above).
+  function updatePlayerAnim(t, dt, state, dist) {
+    if (!t.spr) return;
+    if (state !== t.animState) {
+      t.animState = state; t.animFrame = 0; t.animDist = 0;
+      playerApplyFrame(t);
+    }
+    if (state === 'idle') return;
+    t.animDist += dist;
+    while (t.animDist >= PLAYER_STEP_PX) {
+      t.animDist -= PLAYER_STEP_PX;
+      var frames = PLAYER_FRAMES[state];
+      t.animFrame = (t.animFrame + 1) % frames.length;
+      playerApplyFrame(t);
+    }
+  }
+  function playerApplyFrame(t) {
+    var key = t.animState === 'idle' ? 'heroFull' : PLAYER_FRAMES[t.animState][t.animFrame];
+    var tex = TEX[key];
+    if (!tex) return;
+    if (t.spr.texture !== tex) t.spr.texture = tex;
+    // Frames are 280x280 squares: re-apply the 40px world height so the
+    // swap never changes the rendered size (same rule as cobaApplyFrame).
+    t.spr.height = CHAR_H;
+    t.spr.width = CHAR_H * tex.width / tex.height;
   }
   var TALK_LINES = [
     'Chào bạn! Thành phố hôm nay đông vui lắm.',
@@ -1377,17 +1487,19 @@
     world.addChild(tutLabel);
     cullables.push({ obj: tutLabel, x: 2330, y: 2485, w: 200, h: 36 });
 
-    // Cô Ba Sài Gòn (2026-11-28): a named walker NPC with 5 animated action
-    // rows (stand/walk/run/ride/fall) from assets/characters/coba/. She
-    // walks like the other walkers (server id 'npc-coba', speed 90) and her
-    // sprite animates in updateNPCs. personaId null: talk falls back to the
-    // generic TALK_LINES offline and the 'mai' persona online (server
-    // npc_talk). Created AFTER the guide so npcs[0..9] stay the walkers
-    // (syncNpc maps them by index). Until the 20 PNGs are uploaded,
-    // TEX.coba_stand_0 is null and she renders as the M0 code-drawn person.
+    // Cô Ba Sài Gòn v2 (2026-11-28): a named walker NPC with 12
+    // direction-aware frames (stand/walk/fall x front/side/back) from
+    // assets/characters/coba-v2/. She walks like the other walkers
+    // (server id 'npc-coba', speed 90) and her sprite animates in
+    // updateNPCs. personaId null: talk falls back to the generic
+    // TALK_LINES offline and the 'mai' persona online (server npc_talk).
+    // Created AFTER the guide so npcs[0..9] stay the walkers (syncNpc
+    // maps them by index). Until the 12 PNGs are uploaded,
+    // TEX.coba2_stand_front is null and she renders as the M0 code-drawn
+    // person.
     var cobaWalker = RoadNet.createWalker(Math.floor(Math.random() * RoadNet.PED.length), { speed: 90 });
     var cobaSp = { x: cobaWalker.x, y: cobaWalker.y };
-    var cobaCont = makeFullBody(TEX.coba_stand_0 || null, 'Cô Ba');
+    var cobaCont = makeFullBody(TEX.coba2_stand_front || null, 'Cô Ba');
     cobaCont.position.set(cobaSp.x, cobaSp.y);
     cobaCont.eventMode = 'static';
     cobaCont.cursor = 'pointer';
@@ -1400,7 +1512,7 @@
       container: cobaCont, face: cobaFace, cobaSpr: cobaSpr,
       x: cobaSp.x, y: cobaSp.y, walker: cobaWalker,
       speed: 90, name: 'Cô Ba', color: 0xfd79a8, isTutorial: false, isCoba: true,
-      animState: 'stand', animFrame: 0, animTime: 0, riding: false
+      animState: 'stand_front', animFrame: 0, animDist: 0, facing: 'front'
     };
     cobaCont.userData = cobaObj;
     cobaNpc = cobaObj;
@@ -1410,6 +1522,10 @@
 
     // player (M2: full-body hero sprite + shadow; M0 code-drawn person as fallback)
     player = makeFullBody(TEX.heroFull, playerState.name);
+    // Player action frames (2026-11-28): the inner sprite (null when the
+    // M0 fallback drew instead — then the animator is a no-op).
+    var pFace = (player.userData && player.userData.face) || player;
+    playerAnim.spr = (pFace.children && pFace.children.length && pFace.children[0] instanceof PIXI.Sprite) ? pFace.children[0] : null;
     player.position.set(playerState.x, playerState.y);
     player.zIndex = playerState.y; // y-sorted with traffic / NPCs / animals
     world.addChild(player);
@@ -2513,6 +2629,12 @@
       if (netMode !== 'online') offlineSurvival(dt);
       var face = (player.userData && player.userData.face) || player;
       face.scale.y = 1;
+      // Fainted: back to the front-view sprite (no fall frames exist for
+      // the player) so a side frame never freezes mid-walk.
+      if (playerAnim.animState !== 'idle') {
+        playerAnim.animState = 'idle'; playerAnim.animFrame = 0; playerAnim.animDist = 0;
+        playerApplyFrame(playerAnim);
+      }
       return;
     }
 
@@ -2571,13 +2693,23 @@
 
     player.position.set(playerState.x, playerState.y);
     player.zIndex = playerState.y; // y-sorted with traffic / NPCs / animals
+    // Player action frames (2026-11-28): walk/run/ride side views while
+    // moving with a horizontal component or riding; idle and pure up/down
+    // movement keep the front-view heroFull sprite. Frames advance by the
+    // distance actually traveled this tick (tryMove may block an axis).
+    var pState = playerAnimState(!!currentRidingId(), sprinting, len > 0.1, Math.abs(input.dx) > 0.1);
+    var pMoved = Math.hypot(playerState.x - ox, playerState.y - oy);
+    updatePlayerAnim(playerAnim, dt, pState, pMoved);
     // flip/bob the badge face (not the whole container — the name label
     // must not mirror); for the M0 fallback person the face IS the container.
     var face2 = (player.userData && player.userData.face) || player;
     face2.scale.y = playerState.anim === 'idle' ? 1 : 1 + Math.sin(performance.now() / 90) * 0.03;
-    // direction indicator: flip by horizontal movement
-    if (input.dx < -0.1) face2.scale.x = -1;
-    else if (input.dx > 0.1) face2.scale.x = 1;
+    // direction indicator: flip by horizontal movement. The side-view
+    // frames face LEFT, so moving left shows them as drawn (+1) and moving
+    // right mirrors them (-1); front view keeps the old mapping.
+    var pSide = playerAnim.animState !== 'idle';
+    if (input.dx < -0.1) face2.scale.x = pSide ? 1 : -1;
+    else if (input.dx > 0.1) face2.scale.x = pSide ? -1 : 1;
   }
 
   // M3 (§3.2, offline mirror of the server _secondTick): Hunger -1/15s,
@@ -2694,9 +2826,9 @@
       if (n.speed === 0 && netMode !== 'online') return; // tutorial NPC stays put (offline)
       if (netMode === 'online') {
         // Cô Ba knocked down (onAccident sets downUntil): hold the fall
-        // frames for the same 3 s the server holds her down, then walk on.
+        // frame for the same 3 s the server holds her down, then walk on.
         if (n.isCoba && n.downUntil && Date.now() < n.downUntil) {
-          updateCobaAnim(n, dt, false, 0);
+          updateCobaAnim(n, dt, 0, 0);
           return;
         }
         // server-driven: interpolate toward the server target (n.tx/n.ty,
@@ -2716,17 +2848,21 @@
           // a width-sized sprite. Same rule as the player (updatePlayer)
           // and remote players (updateRemotePlayers, r.face).
           var faceO = n.face || n.container;
-          if (tdx < -0.5) faceO.scale.x = -1;
-          else if (tdx > 0.5) faceO.scale.x = 1;
-          if (n.isCoba) updateCobaAnim(n, dt, true, dt > 0 ? Math.hypot(movedX, movedY) / dt : 0);
+          // The cô ba v2 animator owns her flip (direction-aware); other
+          // walkers keep the old mapping (front-view sprites are symmetric).
+          if (!n.isCoba) {
+            if (tdx < -0.5) faceO.scale.x = -1;
+            else if (tdx > 0.5) faceO.scale.x = 1;
+          }
+          if (n.isCoba) updateCobaAnim(n, dt, movedX, movedY);
         } else if (n.isCoba) {
-          updateCobaAnim(n, dt, false, 0);
+          updateCobaAnim(n, dt, 0, 0);
         }
         return;
       }
       // Knocked down by a car (offline accident): stay down 3 s, then walk on.
       if (n.downUntil && Date.now() < n.downUntil) {
-        if (n.isCoba) updateCobaAnim(n, dt, false, 0);
+        if (n.isCoba) updateCobaAnim(n, dt, 0, 0);
         return;
       }
       var w = RoadNet.stepWalker(n.walker, dt, signalNow());
@@ -2738,12 +2874,13 @@
       // Flip the inner face container, not the outer container (see the
       // online branch above — same dog-streak audit).
       var faceW = n.face || n.container;
-      if (stepX < -0.1) faceW.scale.x = -1;
-      else if (stepX > 0.1) faceW.scale.x = 1;
-      if (n.isCoba) {
-        var moved = Math.hypot(stepX, stepY);
-        updateCobaAnim(n, dt, moved > 0.5, dt > 0 ? moved / dt : 0);
+      // Same rule as the online branch above (cô ba's flip is owned by
+      // her own animator).
+      if (!n.isCoba) {
+        if (stepX < -0.1) faceW.scale.x = -1;
+        else if (stepX > 0.1) faceW.scale.x = 1;
       }
+      if (n.isCoba) updateCobaAnim(n, dt, stepX, stepY);
     });
   }
 
@@ -2830,8 +2967,16 @@
       isBot: !!opts.isBot, personaId: opts.personaId || null,
       isFainted: !!p.isFainted, lastBubbleText: '',
       wander: opts.wander || null, brain: opts.brain || null,
-      nextProactiveAt: opts.nextProactiveAt || 0
+      nextProactiveAt: opts.nextProactiveAt || 0,
+      vehicleId: p.vehicleId || ''
     };
+    // Player action frames (2026-11-28): remotes whose base texture is the
+    // hero sprite share the local player's walk/run/ride animation; other
+    // avatars keep their own full-body sprite (playerAnim stays null).
+    var rFace = entry.face;
+    var rSpr = (rFace && rFace.children && rFace.children.length && rFace.children[0] instanceof PIXI.Sprite) ? rFace.children[0] : null;
+    entry.playerAnim = (entry.avatar === 'hero' || entry.avatar === 'citizen')
+      ? { spr: rSpr, animState: 'idle', animFrame: 0, animDist: 0 } : null;
     container.userData = container.userData || {};
     container.userData.x = p.x; container.userData.y = p.y;
     // keep the entry itself reachable from the container for culling
@@ -2872,11 +3017,11 @@
     var now = Date.now();
     Object.keys(remotePlayers).forEach(function (id) {
       var r = remotePlayers[id];
+      var mdx = 0, mdy = 0; // displacement this tick (drives anim + flip)
       if (netMode === 'offline' && r.wander) {
         // local wander (same rules as M0 NPCs / server bots)
         var w = RoadNet.stepWalker(r.wander, dt, signalNow());
-        if (w.x - r.rx < -0.1) r.face.scale.x = -1;
-        else if (w.x - r.rx > 0.1) r.face.scale.x = 1;
+        mdx = w.x - r.rx; mdy = w.y - r.ry;
         r.rx = w.x; r.ry = w.y;
         // proactive chat: every 20-40 s, only when the player is within 600px
         if (now >= r.nextProactiveAt) {
@@ -2889,10 +3034,25 @@
       } else if (netMode === 'online') {
         var k = Math.min(1, dt * 10);
         var odx = r.tx - r.rx, ody = r.ty - r.ry;
-        r.rx += odx * k; r.ry += ody * k;
-        if (odx < -0.5) r.face.scale.x = -1;
-        else if (odx > 0.5) r.face.scale.x = 1;
+        mdx = odx * k; mdy = ody * k;
+        r.rx += mdx; r.ry += mdy;
       }
+      // Player action frames (2026-11-28): hero-avatar remotes share the
+      // local player's walk/run/ride animation, driven by their interpolated
+      // movement (speed separates walk 180 from sprint 300); other avatars
+      // keep their own full-body sprite (r.playerAnim is null).
+      if (r.playerAnim) {
+        var rSpeed = dt > 0 ? Math.hypot(mdx, mdy) / dt : 0;
+        var rState = playerAnimState(!!r.vehicleId, rSpeed > PLAYER_RUN_SPEED,
+          Math.hypot(mdx, mdy) > 0.5, Math.abs(mdx) > 0.1);
+        updatePlayerAnim(r.playerAnim, dt, rState, Math.hypot(mdx, mdy));
+      }
+      // Flip the inner face container (dog-streak rule). Side-view frames
+      // face left: moving left shows them as drawn (+1), moving right
+      // mirrors them (-1); front view keeps the old mapping.
+      var rSide = r.playerAnim && r.playerAnim.animState !== 'idle';
+      if (mdx < -0.1) r.face.scale.x = rSide ? 1 : -1;
+      else if (mdx > 0.1) r.face.scale.x = rSide ? -1 : 1;
       r.x = r.rx; r.y = r.ry;
       if (r.container.userData) { r.container.userData.x = r.rx; r.container.userData.y = r.ry; }
       r.container.position.set(r.rx, r.ry);
@@ -3315,6 +3475,7 @@
     } else {
       entry.tx = p.x; entry.ty = p.y;
       entry.isFainted = !!p.isFainted;
+      if (p.vehicleId !== undefined) entry.vehicleId = p.vehicleId || '';
       if (p.name && p.name !== entry.name) {
         entry.name = p.name;
         if (entry.label) entry.label.text = p.name;
