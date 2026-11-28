@@ -1694,39 +1694,58 @@
     g.roundRect(x, y, w, h, h / 2).stroke({ width: 1, color: 0xffffff, alpha: 0.6 });
   }
 
+  // HUD TEXT CACHE (lag fix): assigning Pixi Text .text every frame
+  // forces a canvas re-render + texture upload each frame — on phones
+  // this alone can cost several FPS. Only assign when the string
+  // actually changed.
+  var hudTextCache = {};
+  function setHudText(t, key, value) {
+    if (!t) return;
+    if (hudTextCache[key] !== value) {
+      hudTextCache[key] = value;
+      t.text = value;
+    }
+  }
+
   function updateHUD() {
     var bg = hudRefs.barGeom || { x: 52, w: 190, h: 14, ys: [61, 79, 97] };
     drawBar(hudRefs.hpG, bg.x, bg.ys[0], bg.w, bg.h, playerState.hp, 0xe74c3c);
     drawBar(hudRefs.hungerG, bg.x, bg.ys[1], bg.w, bg.h, playerState.hunger, 0xe67e22);
     drawBar(hudRefs.staminaG, bg.x, bg.ys[2], bg.w, bg.h, playerState.stamina, 0x2ecc71);
     // M3: job label follows the chosen job (Shipper / Bác sĩ / Tài xế).
-    if (hudRefs.jobT) hudRefs.jobT.text = 'Nghề: ' + (JOB_LABELS[playerState.job] || 'Chưa có');
+    setHudText(hudRefs.jobT, 'job', 'Nghề: ' + (JOB_LABELS[playerState.job] || 'Chưa có'));
     // M3 (§6.2): active order — countdown + distance + reward.
     if (hudRefs.orderT) {
       var order = currentOrder();
       if (order) {
         var secLeft = Math.max(0, Math.ceil((order.deadlineAt - Date.now()) / 1000));
         var d = Math.round(Math.hypot(order.targetX - playerState.x, order.targetY - playerState.y));
-        hudRefs.orderT.text = 'Giao hàng: còn ' + secLeft + 's • cách ' + d + 'm • thưởng ' +
-          Math.floor(order.reward).toLocaleString('vi-VN') + 'đ';
-      } else hudRefs.orderT.text = '';
+        setHudText(hudRefs.orderT, 'order', 'Giao hàng: còn ' + secLeft + 's • cách ' + d + 'm • thưởng ' +
+          Math.floor(order.reward).toLocaleString('vi-VN') + 'đ');
+      } else setHudText(hudRefs.orderT, 'order', '');
     }
     var cashStr = 'Tiền mặt: ' + Math.floor(playerState.cash).toLocaleString('vi-VN') + 'đ';
     var bankStr = 'Ngân hàng: ' + Math.floor(playerState.bank).toLocaleString('vi-VN') + 'đ';
     // M2: ONE line, panel is 300px wide (236px mobile); shrink the font
     // if a big balance would overflow the panel (user: "chữ không đúng trong khung").
-    var moneySize = 14;
-    hudRefs.moneyT.style.fontSize = moneySize;
-    hudRefs.moneyT.text = cashStr + '  •  ' + bankStr;
-    var moneyMaxW = HUD_BIG ? 212 : 272;
-    while (hudRefs.moneyT.width > moneyMaxW && moneySize > 11) {
-      moneySize -= 1;
+    // LAG FIX: only re-run the shrink-to-fit loop when the money string
+    // (or panel size class) actually changed — it used to run every frame.
+    var moneyKey = cashStr + '  •  ' + bankStr + '|' + (HUD_BIG ? 'big' : 'small');
+    if (hudTextCache.moneyKey !== moneyKey) {
+      hudTextCache.moneyKey = moneyKey;
+      var moneySize = 14;
       hudRefs.moneyT.style.fontSize = moneySize;
+      hudRefs.moneyT.text = cashStr + '  •  ' + bankStr;
+      var moneyMaxW = HUD_BIG ? 212 : 272;
+      while (hudRefs.moneyT.width > moneyMaxW && moneySize > 11) {
+        moneySize -= 1;
+        hudRefs.moneyT.style.fontSize = moneySize;
+      }
     }
     var hh = Math.floor(worldTime / 60) % 24, mm = Math.floor(worldTime % 60);
     var clockStr = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
     var isNight = hh >= 18 || hh < 6;
-    hudRefs.clockT.text = clockStr + (isNight ? '  •  Đêm ' : '  •  Ngày ') + worldDay;
+    setHudText(hudRefs.clockT, 'clock', clockStr + (isNight ? '  •  Đêm ' : '  •  Ngày ') + worldDay);
     // VEHICLES FIX (2026-11-25): riding indicator — speed + how to
     // dismount. Hidden on foot (empty text). Kept SHORT on purpose: the
     // full text with fuel % is ~310px and would overlap the FPS counter
@@ -1735,10 +1754,10 @@
       var ridingId = currentRidingId();
       if (ridingId) {
         var spd = ridingId === 'motorbike' ? 324 : 234;
-        hudRefs.rideT.text = (ridingId === 'motorbike' ? '🏍 Xe máy' : '🚲 Xe đạp') +
-          ' • ' + spd + ' px/s • E: xuống xe';
+        setHudText(hudRefs.rideT, 'ride', (ridingId === 'motorbike' ? '🏍 Xe máy' : '🚲 Xe đạp') +
+          ' • ' + spd + ' px/s • E: xuống xe');
       } else {
-        hudRefs.rideT.text = '';
+        setHudText(hudRefs.rideT, 'ride', '');
       }
     }
   }
@@ -2828,19 +2847,22 @@
       vfx('faint', p.x, p.y, player);
     }
     if (!p.isFainted && faintInfo) { vfx('unfaint', player); faintInfo = null; }
-    // reconcile predicted position: <24px lerp, >=24px snap
+    // reconcile predicted position: <300px lerp, >=300px snap. LAG FIX:
+    // the old 24px snap turned every lag-induced server lag into a hard
+    // rubber-band back to spawn; real teleports (hospital respawn, motel)
+    // are all >300px so they still snap, small jitter just lerps.
     if (firstSelfSync) {
       playerState.x = p.x; playerState.y = p.y;
       if (player) player.position.set(p.x, p.y);
       firstSelfSync = false;
     } else {
       var d = Math.hypot(p.x - playerState.x, p.y - playerState.y);
-      if (d >= 24) {
+      if (d >= 300) {
         playerState.x = p.x; playerState.y = p.y;
         if (player) player.position.set(p.x, p.y);
       } else if (d > 0.5) {
-        playerState.x += (p.x - playerState.x) * 0.25;
-        playerState.y += (p.y - playerState.y) * 0.25;
+        playerState.x += (p.x - playerState.x) * 0.35;
+        playerState.y += (p.y - playerState.y) * 0.35;
       }
     }
     if (p.chatBubble && p.chatBubbleUntil > Date.now() && p.chatBubble !== lastSelfBubbleText) {
@@ -3326,6 +3348,12 @@
         // VEHICLES FIX (2026-11-25): re-ask the owned-vehicle status so a
         // returning player's parked bike renders after a reconnect.
         if (typeof NetClient.sendEconomy === 'function') NetClient.sendEconomy('econ_sync', {});
+        // LAG FIX: if the session was NOT resumed (fresh-join fallback),
+        // the guest's new session starts at 0đ — re-ask the starter
+        // grant. Idempotent: the server answers ALREADY_GRANTED when the
+        // session already received it, so a truly resumed session never
+        // double-pays.
+        if (typeof NetClient.sendEconomy === 'function') NetClient.sendEconomy('starter_grant', {});
         if (typeof NetClient.sendVehicle === 'function') NetClient.sendVehicle('status', {});
         if (typeof NetClient.sendMotel === 'function') NetClient.sendMotel('status', {});
       },
