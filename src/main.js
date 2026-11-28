@@ -1204,10 +1204,10 @@
     propSprite('trashBag', 3215, 1605, 18);
 
     // 5. Cột điện đô thị Việt Nam (bó dây điện chằng chịt, đèn đường)
-    propSprite('powerPole', 1980, 2010, 32);    // Ngã tư Tây Bắc
-    propSprite('powerPole', 2880, 2010, 32);    // Ngã tư Đông Bắc
-    propSprite('powerPole', 1980, 2850, 32);    // Ngã tư Tây Nam
-    propSprite('powerPole', 2880, 2850, 32);    // Ngã tư Đông Nam
+    propSprite('powerPole', 1830, 1830, 32);    // Ngã tư Tây Bắc (vỉa hè ngoài)
+    propSprite('powerPole', 3030, 1830, 32);    // Ngã tư Đông Bắc (vỉa hè ngoài)
+    propSprite('powerPole', 1830, 3030, 32);    // Ngã tư Tây Nam (vỉa hè ngoài)
+    propSprite('powerPole', 3030, 3030, 32);    // Ngã tư Đông Nam (vỉa hè ngoài)
 
     // delivery boxes + bins (decorative): boxes at the warehouse dock,
     // bins near the shop, market, plaza and gardens.

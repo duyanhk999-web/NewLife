@@ -105,9 +105,10 @@
     { kind: 'bin', x: 2700, y: 2260, r: 12 }, { kind: 'bin', x: 900, y: 3000, r: 12 },
     { kind: 'bin', x: 3250, y: 560, r: 12 },
     { kind: 'trashBag', x: 2125, y: 2765, r: 8 }, { kind: 'trashBag', x: 3215, y: 1605, r: 8 },
-    // power poles (w32, thin pole)
-    { kind: 'powerPole', x: 1980, y: 2010, r: 8 }, { kind: 'powerPole', x: 2880, y: 2010, r: 8 },
-    { kind: 'powerPole', x: 1980, y: 2850, r: 8 }, { kind: 'powerPole', x: 2880, y: 2850, r: 8 },
+    // power poles (w32, thin pole) — on the OUTER sidewalk corners of the
+    // ring-road intersections (120px off each centerline), clear of the road
+    { kind: 'powerPole', x: 1830, y: 1830, r: 8 }, { kind: 'powerPole', x: 3030, y: 1830, r: 8 },
+    { kind: 'powerPole', x: 1830, y: 3030, r: 8 }, { kind: 'powerPole', x: 3030, y: 3030, r: 8 },
     // delivery boxes at the warehouse dock (w40)
     { kind: 'box', x: 3900, y: 3200, w: 36, h: 36 }, { kind: 'box', x: 3980, y: 3200, w: 36, h: 36 }
   ];
