@@ -185,6 +185,24 @@
     cub_blue_side:      'assets/vehicles/motorbikes/cub_blue_side.png',
     cub_blue_down:      'assets/vehicles/motorbikes/cub_blue_down.png',
     cub_blue_up:        'assets/vehicles/motorbikes/cub_blue_up.png',
+    // Pixel-art sedan (3 colors x 3 directions) — traffic cars, 2026-11-28
+    car_red_side: 'assets/vehicles/cars/car_red_side.png',
+    car_red_down: 'assets/vehicles/cars/car_red_down.png',
+    car_red_up: 'assets/vehicles/cars/car_red_up.png',
+    car_black_side: 'assets/vehicles/cars/car_black_side.png',
+    car_black_down: 'assets/vehicles/cars/car_black_down.png',
+    car_black_up: 'assets/vehicles/cars/car_black_up.png',
+    car_navy_side: 'assets/vehicles/cars/car_navy_side.png',
+    car_navy_down: 'assets/vehicles/cars/car_navy_down.png',
+    car_navy_up: 'assets/vehicles/cars/car_navy_up.png',
+    // Taxi VinFast VF5 "Xanh SM" (teal) — traffic car, same 3-direction scheme
+    car_taxi2_side: 'assets/vehicles/cars/car_taxi2_side.png',
+    car_taxi2_down: 'assets/vehicles/cars/car_taxi2_down.png',
+    car_taxi2_up: 'assets/vehicles/cars/car_taxi2_up.png',
+    // Blue HANOIBUS route 60 — traffic bus, same 3-direction scheme
+    car_bus_side: 'assets/vehicles/cars/car_bus_side.png',
+    car_bus_down: 'assets/vehicles/cars/car_bus_down.png',
+    car_bus_up: 'assets/vehicles/cars/car_bus_up.png',
     // VEHICLES FIX (2026-11-25): the bicycle had NO image at all (only the
     // motorbike prop existed). FLUX v2, high-angle, keyed out by
     // make_v3_sprites.py — used for the parked owned bike + the ridden bike
@@ -547,7 +565,11 @@
     cub_red:       'Xe Super Cub (Đỏ cờ)',
     cub_blue:      'Xe Honda Dream (Xanh tím)'
   };
-  var CAR_TYPES = ['car', 'carTaxi', 'carSedan', 'carSuv', 'carBus', 'carTruck', 'carVendor'];
+  // Traffic cars: new pixel-art sedan (assets/vehicles/cars/), random color.
+  // Old Kenney types (carTaxi/carSedan/...) stay in the TEX table because
+  // the parked props at the police station/hospital/warehouse/cafe still
+  // use carPolice/carAmbulance/carTruck/carTaxi (main.js ~939-942).
+  var CAR_COLORS = ['red', 'black', 'navy', 'taxi2', 'bus'];
   function spawnTraffic() {
     if (!world) return;
     var bikeIdx = 0, carIdx = 0;
@@ -566,8 +588,8 @@
         cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
         return;
       }
-      v.carType = CAR_TYPES[carIdx++ % CAR_TYPES.length];
-      var tex = TEX[v.carType] || TEX.car;
+      v.carColor = CAR_COLORS[carIdx++ % CAR_COLORS.length];
+      var tex = TEX['car_' + v.carColor + '_down'] || TEX.car;
       if (!tex) return;
       var spr = new PIXI.Sprite(tex);
       spr.anchor.set(0.5, 0.5);
@@ -635,7 +657,31 @@
         }
         v.spr.rotation = 0; // 2.5D Pixel Art giữ thẳng góc nhìn
       } else {
-        v.spr.rotation = v.heading + HEADING_FIX[v.kind];
+        // Cars: 3-direction 2.5D sprites, same scheme as motorbikes —
+        // swap texture by heading quadrant, never rotate the sprite.
+        var h = v.heading;
+        while (h > Math.PI) h -= 2 * Math.PI;
+        while (h < -Math.PI) h += 2 * Math.PI;
+        var ck = 'car_' + (v.carColor || 'red');
+        var isBus = v.carColor === 'bus';
+        var sideW = isBus ? 100 : 66, frontW = isBus ? 52 : 40;
+        var sprTex, scaleX = 1, baseW = 40;
+        if (h >= -Math.PI / 4 && h < Math.PI / 4) {
+          sprTex = TEX[ck + '_side']; scaleX = -1; baseW = sideW;
+        } else if (h >= Math.PI / 4 && h < 3 * Math.PI / 4) {
+          sprTex = TEX[ck + '_down']; scaleX = 1; baseW = frontW;
+        } else if (h >= -3 * Math.PI / 4 && h < -Math.PI / 4) {
+          sprTex = TEX[ck + '_up']; scaleX = 1; baseW = frontW;
+        } else {
+          sprTex = TEX[ck + '_side']; scaleX = 1; baseW = sideW;
+        }
+        if (sprTex) {
+          if (v.spr.texture !== sprTex) v.spr.texture = sprTex;
+          v.spr.width = baseW;
+          v.spr.height = baseW * sprTex.height / sprTex.width;
+          v.spr.scale.x = scaleX * Math.abs(v.spr.scale.x);
+        }
+        v.spr.rotation = 0;
       }
     }
   }
