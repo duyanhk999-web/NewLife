@@ -568,7 +568,7 @@
   // Traffic cars: new pixel-art sedan (assets/vehicles/cars/), random color.
   // Old Kenney types (carTaxi/carSedan/...) stay in the TEX table because
   // the parked props at the police station/hospital/warehouse/cafe still
-  // use carPolice/carAmbulance/carTruck/carTaxi (main.js ~893-896).
+  // use carPolice/carAmbulance/carTruck/carTaxi (main.js ~939-942).
   var CAR_COLORS = ['red', 'black', 'navy', 'taxi2', 'bus'];
   function spawnTraffic() {
     if (!world) return;
