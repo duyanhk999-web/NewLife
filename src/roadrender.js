@@ -223,20 +223,11 @@
     }
     return out;
   }
-  // đèn đường: mép ngoài vỉa hè, cách nhau ~400px, tránh giao lộ
+  // đèn đường: mép ngoài vỉa hè, cách nhau ~400px, tránh giao lộ.
+  // Moved to shared/props.js (2026-11-28) so the server collides with the
+  // same lamp positions — this is now a delegate, one implementation.
   function lampSpots() {
-    var out = [];
-    R.SEGMENTS.forEach(function (s) {
-      var a = R.NODES[s.a], b = R.NODES[s.b];
-      var len = Math.hypot(b.x - a.x, b.y - a.y);
-      var ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
-      var off = HALF + R.SIDEWALK_W - 6;
-      for (var d = 300, i = 0; d < len - 260; d += 400, i++) {
-        var side = i % 2 ? 1 : -1;
-        out.push({ x: a.x + ux * d - uy * off * side, y: a.y + uy * d + ux * off * side });
-      }
-    });
-    return out;
+    return (typeof Props !== 'undefined' && Props.lampSpots) ? Props.lampSpots() : [];
   }
 
   window.RoadRender = { drawRoads: drawRoads, drawPlaza: drawPlaza, createSignals: createSignals,

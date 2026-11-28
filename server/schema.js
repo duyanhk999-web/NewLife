@@ -61,11 +61,28 @@ defineTypes(NpcState, {
   avatar: 'string',
 });
 
+class VehicleState extends Schema {}
+// M4: server-authoritative traffic (2026-11-28): the server steps the
+// shared RoadNet traffic sim (fixed seed) and broadcasts car positions so
+// client and server agree — the client renders traffic from state online.
+// kind: 'car' | 'motorbike'; color: CAR_COLORS value (cars) or
+// MOTORBIKE_TYPES value (motorbikes); heading in radians; speed px/s.
+defineTypes(VehicleState, {
+  id: 'string',
+  kind: 'string',
+  x: 'number',
+  y: 'number',
+  heading: 'number',
+  speed: 'number',
+  color: 'string',
+});
+
 class CityRoomState extends Schema {
   constructor() {
     super();
     this.players = new MapSchema();
     this.npcs = new MapSchema();
+    this.vehicles = new MapSchema();
     this.worldTime = 480; // 08:00, minutes 0..1440
     this.serverNow = 0;
   }
@@ -73,8 +90,9 @@ class CityRoomState extends Schema {
 defineTypes(CityRoomState, {
   players: { map: PlayerState },
   npcs: { map: NpcState },
+  vehicles: { map: VehicleState },
   worldTime: 'number',
   serverNow: 'float64', // ms epoch ('number' có thể mất chính xác)
 });
 
-module.exports = { PlayerState, NpcState, CityRoomState };
+module.exports = { PlayerState, NpcState, VehicleState, CityRoomState };

@@ -6,6 +6,10 @@
    Hooks (assign before connect/join):
      onPlayerAdded(p) / onPlayerChanged(p) / onPlayerRemoved(id)
      onNpcAdded(n) / onNpcChanged(n) / onNpcRemoved(id)
+     onVehicleAdded(v) / onVehicleChanged(v) / onVehicleRemoved(id)
+       (server-authoritative traffic, 2026-11-28)
+     onAccident(msg)    {playerId|npcId, name, x, y, lost?, hp?,
+                         vehicleLeft?, lethal?, at} (traffic accident)
      onChatMessage(msg)  {fromId, fromName, channel, text, targetId, at}
      onChatError(err)    {error}
      onInteractError(err){error, action?}
@@ -61,14 +65,25 @@
     };
   }
 
+  // Traffic vehicle (server-authoritative since 2026-11-28): the server
+  // steps the shared RoadNet sim and mirrors it in state.vehicles.
+  function plainVehicle(v) {
+    if (!v) return null;
+    return {
+      id: v.id, kind: v.kind, color: v.color || '', x: v.x, y: v.y,
+      heading: v.heading || 0, speed: v.speed || 0
+    };
+  }
+
   function snapshotOf(state) {
-    var players = [], npcs = [];
+    var players = [], npcs = [], vehicles = [];
     if (state) {
       if (state.players) state.players.forEach(function (p) { players.push(plainPlayer(p)); });
       if (state.npcs) state.npcs.forEach(function (n) { npcs.push(plainNpc(n)); });
+      if (state.vehicles) state.vehicles.forEach(function (v) { vehicles.push(plainVehicle(v)); });
     }
     return {
-      players: players, npcs: npcs,
+      players: players, npcs: npcs, vehicles: vehicles,
       worldTime: state ? state.worldTime : 480
     };
   }
@@ -285,6 +300,20 @@
             self._call('onNpcRemoved', key);
           });
         }
+        // Traffic (2026-11-28): server-authoritative vehicles in
+        // state.vehicles — main.js renders them online and clears its
+        // local sim. Guarded: an older server has no vehicles map.
+        if (state.vehicles) {
+          state.vehicles.onAdd(function (vehicle, key) {
+            self._call('onVehicleAdded', plainVehicle(vehicle));
+            if (vehicle && typeof vehicle.onChange === 'function') {
+              vehicle.onChange(function () { self._call('onVehicleChanged', plainVehicle(vehicle)); });
+            }
+          }, true);
+          state.vehicles.onRemove(function (vehicle, key) {
+            self._call('onVehicleRemoved', key);
+          });
+        }
         if (typeof state.listen === 'function') {
           state.listen('worldTime', function (value) {
             self._call('onWorldTime', value);
@@ -320,6 +349,10 @@
       room.onMessage('vehicle_result', function (msg) { self._call('onVehicleResult', msg); });
       room.onMessage('taxi_result', function (msg) { self._call('onTaxiResult', msg); });
       room.onMessage('motel_result', function (msg) { self._call('onMotelResult', msg); });
+      // Traffic accident (2026-11-28): {playerId|npcId, name, x, y,
+      // lost?, hp?, vehicleLeft?, lethal?, at} — main.js shows VFX/SFX +
+      // chat/bubble.
+      room.onMessage('accident', function (msg) { self._call('onAccident', msg); });
 
       room.onLeave(function (code) {
         self.connected = false;

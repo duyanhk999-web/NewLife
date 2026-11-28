@@ -109,5 +109,34 @@ for (var z = 0; z < 100; z++) R.stepTraffic([one], 0.05, 1000, [ped]);
 check('xe phanh trước người trên lòng đường', Math.hypot(ped.x - one.x, ped.y - one.y) >= one.len / 2,
   Math.hypot(ped.x - one.x, ped.y - one.y).toFixed(0) + 'px');
 
+// ---- xe không kịp phanh khi người bước ra quá gần ----
+// Xe đang chạy 250 px/s; người xuất hiện cách tâm xe 60px (mũi xe chỉ còn
+// 10px tới người — nhỏ hơn quãng phanh 250²/(2·420) ≈ 74px): xe không dừng
+// kịp -> đâm. Người ở 200px (xa hơn 74+50+24=148px) thì xe dừng kịp.
+var fast = R.createTraffic(1, rng(11))[0];
+fast.speed = 250;
+var pedNear = { x: fast.x + Math.cos(fast.heading) * 60, y: fast.y + Math.sin(fast.heading) * 60 };
+var hitNear = false, movedNear = 0, fx0 = fast.x, fy0 = fast.y;
+for (var z = 0; z < 60; z++) {
+  R.stepTraffic([fast], 0.05, 1000, [pedNear]);
+  if (R.hitVehicle(pedNear.x, pedNear.y, 16, fast)) hitNear = true;
+}
+movedNear = Math.hypot(fast.x - fx0, fast.y - fy0);
+check('xe 250px/s không kịp phanh khi người ở 60px phía trước (quãng phanh ~74px)',
+  hitNear && movedNear > 5, 'đâm=' + hitNear + ', xe đi được ' + movedNear.toFixed(0) + 'px');
+var slow = R.createTraffic(1, rng(23))[0];
+slow.speed = 250;
+var pedFar = { x: slow.x + Math.cos(slow.heading) * 200, y: slow.y + Math.sin(slow.heading) * 200 };
+var hitFar = false;
+for (var z = 0; z < 100; z++) {
+  R.stepTraffic([slow], 0.05, 1000, [pedFar]);
+  if (R.hitVehicle(pedFar.x, pedFar.y, 16, slow)) hitFar = true;
+}
+check('xe 250px/s dừng kịp khi người ở 200px phía trước', !hitFar,
+  'khoảng cách cuối ' + Math.hypot(pedFar.x - slow.x, pedFar.y - slow.y).toFixed(0) + 'px');
+check('quãng phanh 250px/s ≈ 74px, 170px/s ≈ 34px',
+  Math.abs(R.brakingDistance(250) - 74.4) < 1 && Math.abs(R.brakingDistance(170) - 34.4) < 1,
+  R.brakingDistance(250).toFixed(1) + ' / ' + R.brakingDistance(170).toFixed(1) + 'px');
+
 console.log('\n' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed ? 1 : 0);

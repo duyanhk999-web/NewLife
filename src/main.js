@@ -101,6 +101,46 @@
   function blocked(x, y, r) {
     return hitBuilding(x, y, r) || hitFence(x, y, r) || inFountain(x, y, r);
   }
+  // Full solid collision (2026-11-28): the server twin of CityRoom
+  // _blockedFor — same helpers, same data, so client prediction and server
+  // authority agree. Map + street props (shared/props.js) + traffic
+  // vehicles (server sim online / local sim offline) + NPCs/animals +
+  // other players (circles r 16). `self` is the object being moved (never
+  // blocks itself); pass null to check against everyone.
+  function blockedFull(x, y, r, self) {
+    if (blocked(x, y, r)) return true;
+    if (typeof Props !== 'undefined' && Props.hitProp && Props.hitProp(x, y, r)) return true;
+    var i, v, dx, dy;
+    for (i = 0; i < traffic.length; i++) {
+      v = traffic[i];
+      if (RoadNet.hitVehicle(x, y, r, v)) return true;
+    }
+    for (i = 0; i < npcs.length; i++) {
+      var n = npcs[i];
+      if (self && n === self) continue;
+      dx = x - n.x; dy = y - n.y;
+      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+    }
+    if (tutorialNpc && self !== tutorialNpc) {
+      dx = x - tutorialNpc.x; dy = y - tutorialNpc.y;
+      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+    }
+    for (i = 0; i < animals.length; i++) {
+      var a = animals[i];
+      if (self && a === self) continue;
+      dx = x - a.x; dy = y - a.y;
+      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+    }
+    var ids = Object.keys(remotePlayers);
+    for (i = 0; i < ids.length; i++) {
+      var rp = remotePlayers[ids[i]];
+      if (self && rp && rp.playerState === self) continue;
+      if (!rp || !rp.playerState) continue;
+      dx = x - rp.playerState.x; dy = y - rp.playerState.y;
+      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+    }
+    return false;
+  }
   function isOpenPoint(x, y) { return Colliders.isOpenPoint(x, y); }
   function randomOpenPoint() { return Colliders.randomOpenPoint(); }
 
@@ -283,6 +323,43 @@
   var npcs = [], tutorialNpc = null;
   var animals = []; // Map v2 §7: dogs + cats, visual-only wanderers (no gameplay)
   var traffic = []; // 2026-11-25: ambient moving cars/motorbikes on the roads (visual only)
+  // Server-authoritative traffic (2026-11-28): online, cars come from
+  // state.vehicles (the server steps the shared RoadNet sim) — the local
+  // sim below is used ONLY offline. `traffic` is the single render list:
+  // online it holds the server vehicles, offline the local sim vehicles.
+  var trafficAccidentAt = 0; // last local (offline) accident ms — 3 s cooldown
+  function clearLocalTraffic() {
+    // Remove the local sim sprites + their cullables so the server traffic
+    // can take over (online) without double cars or stale cull entries.
+    // Server vehicles (server: true) are never removed here.
+    for (var i = traffic.length - 1; i >= 0; i--) {
+      var v = traffic[i];
+      if (v.server) continue;
+      if (v.spr) { try { world.removeChild(v.spr); } catch (e) {} }
+      for (var j = cullables.length - 1; j >= 0; j--) {
+        if (cullables[j].obj === v.spr) cullables.splice(j, 1);
+      }
+      traffic.splice(i, 1);
+    }
+  }
+  function switchTrafficToServer() {
+    // Join / rejoin: stop the local sim, the server drives traffic now.
+    if (traffic.length) clearLocalTraffic();
+  }
+  function switchTrafficToLocal() {
+    // Back to offline: drop the server vehicles and restart the local sim
+    // (same seed, so the cars keep their layout).
+    for (var i = traffic.length - 1; i >= 0; i--) {
+      var v = traffic[i];
+      if (!v.server) continue;
+      if (v.spr) { try { world.removeChild(v.spr); } catch (e) {} }
+      for (var j = cullables.length - 1; j >= 0; j--) {
+        if (cullables[j].obj === v.spr) cullables.splice(j, 1);
+      }
+      traffic.splice(i, 1);
+    }
+    if (!traffic.length) spawnTraffic();
+  }
   var cullables = []; // {obj, x, y, w, h}
   var lampGlows = [];
   var keys = {};
@@ -526,6 +603,27 @@
   function updateAnimals(dt) {
     var now = Date.now();
     animals.forEach(function (a) {
+      if (netMode === 'online') {
+        // Server-driven: lerp toward the server position (a.tx/a.ty, set
+        // from state.npcs patches via syncNpc); the server wanders the
+        // animals. A knocked-down animal stays put (the server holds it
+        // 3 s after a hit, so its state position does not move).
+        if (a.tx === undefined) return;
+        var tdx = a.tx - a.x, tdy = a.ty - a.y;
+        var td = Math.hypot(tdx, tdy);
+        if (td > 1) {
+          var k = Math.min(1, dt * 10);
+          a.x += tdx * k; a.y += tdy * k;
+          a.container.position.set(a.x, a.y);
+          a.container.zIndex = a.y;
+          // Flip by sign of the BASE scale (same dog-streak rule as below).
+          if (tdx < -0.5) a.container.scale.x = -Math.abs(a.baseScaleX);
+          else if (tdx > 0.5) a.container.scale.x = Math.abs(a.baseScaleX);
+        }
+        return;
+      }
+      // Knocked down by a car (offline accident): stay down 3 s, then walk on.
+      if (a.downUntil && now < a.downUntil) return;
       if (now < a.pauseUntil) return;
       var dx = a.targetX - a.x, dy = a.targetY - a.y;
       var d = Math.hypot(dx, dy);
@@ -570,37 +668,44 @@
   // the parked props at the police station/hospital/warehouse/cafe still
   // use carPolice/carAmbulance/carTruck/carTaxi (main.js ~939-942).
   var CAR_COLORS = ['red', 'black', 'navy', 'taxi2', 'bus'];
-  function spawnTraffic() {
-    if (!world) return;
-    var bikeIdx = 0, carIdx = 0;
-    RoadNet.createTraffic(TRAFFIC_COUNT).forEach(function (v) {
-      if (v.kind === 'motorbike') {
-        v.bikeType = MOTORBIKE_TYPES[bikeIdx++ % MOTORBIKE_TYPES.length];
-        var tex = TEX[v.bikeType + '_down'] || TEX[v.bikeType + '_side'] || TEX.motorbike;
-        if (!tex) return;
-        var spr = new PIXI.Sprite(tex);
-        spr.anchor.set(0.5, 0.5);
-        spr.width = 28; spr.height = 28 * tex.height / tex.width;
-        world.addChild(spr);
-        v.spr = spr;
-        spr.userData = v;
-        traffic.push(v);
-        cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
-        return;
-      }
-      v.carColor = CAR_COLORS[carIdx++ % CAR_COLORS.length];
-      var tex = TEX['car_' + v.carColor + '_down'] || TEX.car;
-      if (!tex) return;
-      var spr = new PIXI.Sprite(tex);
+  // Sprite for one traffic vehicle (car or motorbike), or null when its
+  // texture is missing. Shared by the local sim (spawnTraffic, offline)
+  // and the server-driven traffic (syncTraffic, online).
+  function makeTrafficSprite(v) {
+    var tex, spr;
+    if (v.kind === 'motorbike') {
+      var texKey = v.bikeType || 'cub_red';
+      tex = TEX[texKey + '_down'] || TEX[texKey + '_side'] || TEX.motorbike;
+      if (!tex) return null;
+      spr = new PIXI.Sprite(tex);
+      spr.anchor.set(0.5, 0.5);
+      spr.width = 28; spr.height = 28 * tex.height / tex.width;
+    } else {
+      tex = TEX['car_' + v.carColor + '_down'] || TEX.car;
+      if (!tex) return null;
+      spr = new PIXI.Sprite(tex);
       spr.anchor.set(0.5, 0.5);
       // chiều dài xe = v.len; giữ nguyên tỉ lệ ảnh
       var k = v.len / tex.width;
       spr.width = tex.width * k; spr.height = tex.height * k;
-      world.addChild(spr);
+    }
+    spr.userData = v; // lets updateCulling follow the vehicle (same as NPCs)
+    world.addChild(spr);
+    cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
+    return spr;
+  }
+  function spawnTraffic() {
+    if (!world) return;
+    var bikeIdx = 0, carIdx = 0;
+    // Seeded (RoadNet.TRAFFIC_SEED): the offline layout matches the
+    // server's layout, so going online/offline never reshuffles the cars.
+    RoadNet.createTraffic(TRAFFIC_COUNT, RoadNet.mulberry32(RoadNet.TRAFFIC_SEED)).forEach(function (v) {
+      if (v.kind === 'motorbike') v.bikeType = MOTORBIKE_TYPES[bikeIdx++ % MOTORBIKE_TYPES.length];
+      else v.carColor = CAR_COLORS[carIdx++ % CAR_COLORS.length];
+      var spr = makeTrafficSprite(v);
+      if (!spr) return;
       v.spr = spr;
-      spr.userData = v; // lets updateCulling follow the vehicle (same as NPCs)
       traffic.push(v);
-      cullables.push({ obj: spr, x: v.x - 55, y: v.y - 55, w: 110, h: 110 });
     });
     updateTraffic(0);
   }
@@ -613,12 +718,13 @@
     });
     return list;
   }
-  function updateTraffic(dt) {
-    RoadNet.stepTraffic(traffic, dt, signalNow(), trafficObstacles());
-    for (var i = 0; i < traffic.length; i++) {
-      var v = traffic[i];
-      v.spr.position.set(v.x, v.y);
-      v.spr.zIndex = v.y; // y-sorted with the player
+  // Position + heading texture swap for one traffic vehicle. Shared by the
+  // offline sim and the online state-driven render (same 2.5D scheme:
+  // swap texture by heading quadrant, never rotate the sprite).
+  function renderTrafficVehicle(v) {
+    if (!v.spr) return;
+    v.spr.position.set(v.x, v.y);
+    v.spr.zIndex = v.y; // y-sorted with the player
       if (v.kind === 'motorbike') {
         var h = v.heading;
         while (h > Math.PI) h -= 2 * Math.PI;
@@ -682,6 +788,136 @@
           v.spr.scale.x = scaleX * Math.abs(v.spr.scale.x);
         }
         v.spr.rotation = 0;
+      }
+  }
+  function updateTraffic(dt) {
+    if (netMode === 'online') {
+      // Server-authoritative: the server steps the sim (shared RoadNet,
+      // fixed seed); the client only lerps each sprite toward its state
+      // position (20 Hz patches) — no local sim, no local braking.
+      for (var i = 0; i < traffic.length; i++) {
+        var v = traffic[i];
+        if (v.tx === undefined) { v.tx = v.x; v.ty = v.y; }
+        var k = Math.min(1, dt * 12);
+        v.x += (v.tx - v.x) * k;
+        v.y += (v.ty - v.y) * k;
+        renderTrafficVehicle(v);
+      }
+      return;
+    }
+    // Offline: step the LOCAL sim only (server vehicles, if any are
+    // already in traffic[] from a just-finished session, are not stepped
+    // — they have no from/to/curve fields and stepTraffic would crash).
+    var localTraffic = [];
+    for (var li = 0; li < traffic.length; li++) {
+      if (!traffic[li].server) localTraffic.push(traffic[li]);
+    }
+    RoadNet.stepTraffic(localTraffic, dt, signalNow(), trafficObstacles());
+    for (var i = 0; i < traffic.length; i++) renderTrafficVehicle(traffic[i]);
+    checkOfflineAccident();
+  }
+  // Offline accident (2026-11-28): same rules as the server — a car that
+  // cannot brake in time hits the player (and NPCs) on the road. The
+  // server is not there to apply the penalty, so the client applies it
+  // locally (offlineAccident below). 3 s cooldown per person.
+  function checkOfflineAccident() {
+    var now = Date.now();
+    for (var i = 0; i < traffic.length; i++) {
+      var v = traffic[i];
+      if (v.speed <= 30) continue;
+      if (!playerState.isFainted && now - trafficAccidentAt >= 3000
+        && RoadNet.inRoad(playerState.x, playerState.y)
+        && RoadNet.hitVehicle(playerState.x, playerState.y, 16, v)) {
+        offlineAccident(v);
+        return;
+      }
+      var j, n;
+      for (j = 0; j < npcs.length; j++) {
+        n = npcs[j];
+        if (!RoadNet.inRoad(n.x, n.y)) continue;
+        if (now - (n.accidentAt || 0) < 3000) continue;
+        if (RoadNet.hitVehicle(n.x, n.y, 16, v)) {
+          n.accidentAt = now; n.downUntil = now + 3000;
+          appendChatLog('', '', '🚑 ' + (n.name || 'NPC') + ' bị xe đâm, ngã xuống đường!', true);
+          showBubble(n.x, n.y, '💫', 2500);
+          vfx('faint', n.x, n.y, n.container);
+        }
+      }
+      for (j = 0; j < animals.length; j++) {
+        n = animals[j];
+        if (!RoadNet.inRoad(n.x, n.y)) continue;
+        if (now - (n.accidentAt || 0) < 3000) continue;
+        if (RoadNet.hitVehicle(n.x, n.y, 16, v)) {
+          n.accidentAt = now; n.downUntil = now + 3000;
+          appendChatLog('', '', '🚑 ' + (n.kind === 'cat' ? 'Mèo' : 'Chó') + ' bị xe đâm, ngã xuống đường!', true);
+          showBubble(n.x, n.y, '💫', 2500);
+          vfx('faint', n.x, n.y, n.container);
+        }
+      }
+    }
+  }
+  // Offline hit penalty — the exact user numbers, applied locally:
+  // teleport to the hospital, lose 30% of CASH (not bank), lose 10 HP.
+  // No hospital fee on top. A hit at HP <= 10 is a normal faint instead
+  // (hp = 0, offlineSurvival faints the player: 50% cash, 60 s).
+  function offlineAccident(v) {
+    trafficAccidentAt = Date.now();
+    if (playerState.hp <= 10) {
+      appendChatLog('', '', '🚑 Bạn bị xe đâm khi máu đã thấp — ngất xỉu!', true);
+      playerState.hp = 0;
+      return; // offlineSurvival faints the player at hp <= 0
+    }
+    var lost = Math.floor(playerState.cash * 0.3);
+    playerState.cash -= lost;
+    playerState.hp -= 10;
+    var hSpawn = (typeof M3 !== 'undefined' && M3.HOSPITAL_SPAWN) ? M3.HOSPITAL_SPAWN : { x: 4125, y: 1890 };
+    playerState.x = hSpawn.x; playerState.y = hSpawn.y;
+    playerState.vx = 0; playerState.vy = 0; playerState.anim = 'idle';
+    if (player) player.position.set(playerState.x, playerState.y);
+    sfx('faint');
+    vfx('faint', playerState.x, playerState.y, player);
+    appendChatLog('', '', '🚑 Bạn bị xe đâm! Đưa về Bệnh viện, mất ' +
+      lost.toLocaleString('vi-VN') + 'đ (30% tiền mặt) và 10 HP.', true);
+    showBubble(playerState.x, playerState.y, 'Đau quá! Bị xe đâm rồi…', 4000);
+  }
+  // Server traffic (2026-11-28): create / update the client-side vehicle
+  // objects from state.vehicles patches (or the onSnapshot sweep). The
+  // server position is the target (tx/ty); updateTraffic lerps the sprite
+  // toward it. len comes from the shared SIZE table (the state has no len
+  // field); carColor / bikeType are the texture keys. `server: true` marks
+  // these so clearLocalTraffic (local sim cleanup) never removes them.
+  function syncTraffic(v) {
+    var local = null;
+    for (var i = 0; i < traffic.length; i++) {
+      if (traffic[i].id === v.id) { local = traffic[i]; break; }
+    }
+    if (!local) {
+      local = {
+        id: v.id, kind: v.kind, len: (RoadNet.SIZE[v.kind] || 100),
+        x: v.x, y: v.y, heading: v.heading, speed: v.speed,
+        tx: v.x, ty: v.y, server: true
+      };
+      if (v.kind === 'motorbike') local.bikeType = v.color;
+      else local.carColor = v.color;
+      var spr = makeTrafficSprite(local);
+      if (!spr) return;
+      local.spr = spr;
+      traffic.push(local);
+      return;
+    }
+    local.heading = v.heading; local.speed = v.speed;
+    local.tx = v.x; local.ty = v.y;
+  }
+  function removeTraffic(id) {
+    for (var i = traffic.length - 1; i >= 0; i--) {
+      if (traffic[i].id === id) {
+        var v = traffic[i];
+        if (v.spr) { try { world.removeChild(v.spr); } catch (e) {} }
+        for (var j = cullables.length - 1; j >= 0; j--) {
+          if (cullables[j].obj === v.spr) cullables.splice(j, 1);
+        }
+        traffic.splice(i, 1);
+        return;
       }
     }
   }
@@ -2100,8 +2336,11 @@
 
   // ---------- movement / collision ----------
   function tryMove(x, y, r) {
-    // axis-separated: caller moves one axis at a time
-    return !blocked(x, y, r);
+    // axis-separated: caller moves one axis at a time. Full solid
+    // collision (2026-11-28): map + street props + traffic + NPCs/animals
+    // + other players — the same _blockedFor the server enforces, so the
+    // client never predicts through an object and gets snapped back.
+    return !blockedFull(x, y, r, null);
   }
 
   // Current movement input, shared by updatePlayer (local prediction) and
@@ -2345,6 +2584,8 @@
         }
         return;
       }
+      // Knocked down by a car (offline accident): stay down 3 s, then walk on.
+      if (n.downUntil && Date.now() < n.downUntil) return;
       var w = RoadNet.stepWalker(n.walker, dt, signalNow());
       var stepX = w.x - n.x;
       n.x = w.x; n.y = w.y;
@@ -2860,6 +3101,8 @@
     setStartStatus('Offline — chơi đơn (không có máy chủ)');
     clearRemotePlayers();
     spawnOfflineBots();
+    // Traffic: the server is gone — drop its vehicles, restart the local sim.
+    switchTrafficToLocal();
   }
 
   function syncSelf(p) {
@@ -2957,6 +3200,14 @@
     else if (n.id.indexOf('npc-walker-') === 0) {
       var idx = parseInt(n.id.slice('npc-walker-'.length), 10);
       if (!isNaN(idx) && npcs[idx]) local = npcs[idx];
+    } else if (n.id.indexOf('animal-') === 0) {
+      // Server-authoritative animals (2026-11-28): 'animal-dog-0' →
+      // animals[0], 'animal-cat-0' → animals[dogs.length] (dogs are
+      // spawned before cats on both sides).
+      var parts = n.id.split('-');
+      var aIdx = parseInt(parts[2], 10);
+      if (parts[1] === 'cat') aIdx += (Colliders.ANIMALS && Colliders.ANIMALS.dogs ? Colliders.ANIMALS.dogs.length : 0);
+      if (!isNaN(aIdx) && animals[aIdx]) local = animals[aIdx];
     }
     if (!local) return;
     if (local.tx === undefined || Math.hypot(n.x - local.x, n.y - local.y) > 200) {
@@ -3022,6 +3273,43 @@
       },
       onNpcAdded: function (n) { syncNpc(n); },
       onNpcChanged: function (n) { syncNpc(n); },
+      onVehicleAdded: function (v) { syncTraffic(v); },
+      onVehicleChanged: function (v) { syncTraffic(v); },
+      onVehicleRemoved: function (id) { removeTraffic(id); },
+      // Traffic accident (2026-11-28): the server already applied the
+      // penalty (teleport + 30% cash + 10 HP for the player; 3 s down for
+      // NPCs) — the client only makes it visible: VFX + SFX + chat + bubble.
+      onAccident: function (msg) {
+        if (!msg) return;
+        if (msg.lethal) {
+          // Hit at HP <= 10: a normal faint, not the accident penalty —
+          // the faint flow (50% cash, 60 s) takes over; the message says so.
+          appendChatLog('', '', '🚑 ' + msg.name + ' bị xe đâm khi máu đã thấp — ngất xỉu!', true);
+          if (msg.playerId === mySessionId) { playFaintSfx(); vfx('faint', msg.x, msg.y, player); }
+          return;
+        }
+        if (msg.playerId) {
+          if (msg.playerId === mySessionId) {
+            playFaintSfx();
+            vfx('faint', msg.x, msg.y, player);
+            appendChatLog('', '', '🚑 Bạn bị xe đâm! Đưa về Bệnh viện, mất ' +
+              (msg.lost || 0).toLocaleString('vi-VN') + 'đ (30% tiền mặt) và 10 HP' +
+              (msg.vehicleLeft ? ' — xe của bạn để lại chỗ tai nạn.' : '.'), true);
+            showBubble(playerState.x, playerState.y, 'Đau quá! Bị xe đâm rồi…', 4000);
+          } else {
+            appendChatLog('', '', '🚑 ' + msg.name + ' bị xe đâm, đưa về Bệnh viện!', true);
+            if (remotePlayers[msg.playerId]) showRemoteBubble(msg.playerId, 'Đau quá! Bị xe đâm rồi…', 4000);
+            var rp = remotePlayers[msg.playerId];
+            if (rp) vfx('faint', rp.rx, rp.ry);
+          }
+          return;
+        }
+        if (msg.npcId) {
+          appendChatLog('', '', '🚑 ' + msg.name + ' bị xe đâm, ngã xuống đường!', true);
+          vfx('faint', msg.x, msg.y);
+          showBubble(msg.x, msg.y, '💫', 2500);
+        }
+      },
       onNpcRemoved: function (id) {
         // M4: a picked-up / despawned taxi customer loses its sprite.
         if (taxiSprites[id]) {
@@ -3372,6 +3660,9 @@
           if (!seen[id]) removeRemotePlayer(id);
         });
         snap.npcs.forEach(function (n) { syncNpc(n); });
+        // Traffic (2026-11-28): the snapshot sweep is the safety net for
+        // state.vehicles patches (syncTraffic is idempotent).
+        if (snap.vehicles) snap.vehicles.forEach(function (v) { syncTraffic(v); });
         var humans = 0;
         snap.players.forEach(function (p) { if (p.id.indexOf('bot-') !== 0) humans += 1; });
         if (humans !== lastHumanCount) {
@@ -3391,6 +3682,8 @@
         firstSelfSync = true;
         setNetStatus('Online…');
         setStartStatus('Online — đã kết nối lại');
+        // Traffic: the server drives the cars now — stop the local sim.
+        switchTrafficToServer();
         // VEHICLES FIX (2026-11-25): re-ask the owned-vehicle status so a
         // returning player's parked bike renders after a reconnect.
         if (typeof NetClient.sendEconomy === 'function') NetClient.sendEconomy('econ_sync', {});
@@ -3452,6 +3745,8 @@
         setNetStatus('Online…');
         setStartStatus(authSession ? 'Online — đã đăng nhập & lưu tiến trình' : 'Online — chế độ Khách');
         updateAuthChip();
+        // Traffic: the server drives the cars now — stop the local sim.
+        switchTrafficToServer();
         if (typeof NetClient.sendEconomy === 'function') {
           NetClient.sendEconomy('econ_sync', {});
           NetClient.sendEconomy('starter_grant', {});

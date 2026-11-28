@@ -13,6 +13,17 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
+  // Seeded RNG (same algorithm as src/main.js) — the server creates its
+  // traffic with a fixed seed so the sim is reproducible across restarts.
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
   var MAP = 4800;
   var ROAD_W = 180, SIDEWALK_W = 60;
   var HALF = ROAD_W / 2;
@@ -257,6 +268,18 @@
 
   // ---------- xe cộ ----------
   var ACC = 220, DEC = 420, GAP = 28;
+  // Traffic roster (shared by the client offline sim and the server
+  // authoritative sim — keep CAR_COLORS / MOTORBIKE_TYPES in sync with the
+  // same-named lists in src/main.js, which the client uses for its offline
+  // sim and the bike-type cycler).
+  var TRAFFIC_COUNT = 20;
+  var TRAFFIC_SEED = 20261128; // fixed seed: the server sim and the client's
+  // offline sim create the same traffic layout (same cars, same places).
+  var CAR_COLORS = ['red', 'black', 'navy', 'taxi2', 'bus'];
+  var MOTORBIKE_TYPES = [
+    'cub_blue', 'cub_red', 'cub_white',
+    'scooter_blue', 'scooter_red', 'scooter_white'
+  ];
   var SIZE = { car: 100, motorbike: 56 };
   var APPROACH_AXIS = function (a, b) { return a.y === b.y ? 'h' : 'v'; };
   function lanePoint(fromId, toId, s) {
@@ -365,6 +388,18 @@
     }
     return best;
   }
+  // Quãng đường phanh ở tốc độ hiện tại (vật lý: v² / 2·DEC). Xe chạy
+  // 250 px/s cần 74px, 170 px/s cần 34px để dừng hẳn.
+  function brakingDistance(speed) { return speed * speed / (2 * DEC); }
+  // Người (hình tròn r) có đang bị thân xe đè lên không? Hộp xe: dài len,
+  // rộng 48px (ô tô) / 28px (xe máy), cộng r của người mỗi phía.
+  function hitVehicle(x, y, r, v) {
+    var ux = Math.cos(v.heading), uy = Math.sin(v.heading);
+    var dx = x - v.x, dy = y - v.y;
+    var along = dx * ux + dy * uy, side = Math.abs(dx * -uy + dy * ux);
+    var halfW = v.kind === 'motorbike' ? 14 : 24;
+    return along > -(v.len / 2 + r) && along < (v.len / 2 + r) && side < halfW + r;
+  }
   function stepTraffic(list, dt, now, obstacles) {
     for (var i = 0; i < list.length; i++) {
       var v = list[i];
@@ -403,11 +438,19 @@
           }
         }
       }
-      if (obstacles && obstacles.length) room = Math.min(room, obstacleGap(v, obstacles));
+      // Người đi bộ là "mềm": họ chỉ đặt tốc độ mục tiêu, KHÔNG kẹp cứng
+      // quãng đường xe được đi. Xe chỉ phanh tối đa DEC (420 px/s², vật
+      // lý thật) — nếu người bước ra quá gần (gần hơn quãng phanh
+      // v²/(2·DEC)), xe không kịp dừng và sẽ đâm (xem hitVehicle).
+      // Xe trước / đèn đỏ / giao lộ vẫn kẹp cứng qua `room` như cũ.
+      var pedGap = (obstacles && obstacles.length) ? obstacleGap(v, obstacles) : Infinity;
+      pedGap = Math.max(0, pedGap); // người đã ở trong khoảng dừng: mục tiêu 0
       room = Math.max(0, room);
-      var target = Math.min(v.vmax, Math.sqrt(2 * DEC * 0.7 * room));
+      var target = Math.min(v.vmax, Math.sqrt(2 * DEC * 0.7 * Math.min(room, pedGap)));
       if (v.curve) target = Math.min(target, 160);
-      v.speed = target > v.speed ? Math.min(target, v.speed + ACC * dt) : target;
+      // Giới hạn phanh vật lý: không giảm tốc nhanh hơn DEC mỗi giây.
+      // (Tăng tốc vẫn tối đa ACC như cũ.)
+      v.speed = target > v.speed ? Math.min(target, v.speed + ACC * dt) : Math.max(target, v.speed - DEC * dt);
       v.s += Math.min(v.speed * dt, room);
       if (!v.curve) {
         var end = laneEnd(v.from, v.to);
@@ -429,6 +472,9 @@
     ROAD_RECTS: ROAD_RECTS, SIDEWALK_RECTS: SIDEWALK_RECTS, CROSSWALKS: CROSSWALKS, PED: PED,
     CYCLE: CYCLE, inRoad: inRoad, inSidewalk: inSidewalk, signalState: signalState,
     nearestPed: nearestPed, createWalker: createWalker, stepWalker: stepWalker,
-    createTraffic: createTraffic, stepTraffic: stepTraffic
+    createTraffic: createTraffic, stepTraffic: stepTraffic, mulberry32: mulberry32,
+    DEC: DEC, ACC: ACC, brakingDistance: brakingDistance, hitVehicle: hitVehicle,
+    TRAFFIC_COUNT: TRAFFIC_COUNT, TRAFFIC_SEED: TRAFFIC_SEED, CAR_COLORS: CAR_COLORS, MOTORBIKE_TYPES: MOTORBIKE_TYPES,
+    SIZE: SIZE
   };
 });

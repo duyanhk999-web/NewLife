@@ -17,6 +17,8 @@ const { Client } = require('colyseus.js');
 const { start } = require('../index');
 const M3 = require('../../shared/m3');
 const BotBrain = require('../../shared/botBrain');
+const RoadNet = require('../../shared/roadnet');
+const Props = require('../../shared/props');
 
 const PORT = parseInt(process.env.TEST_PORT || '2568', 10);
 let failures = 0;
@@ -50,6 +52,8 @@ async function main() {
   const jobResultsA = [], jobResultsB = [], npcTalksA = [], revivedMsgs = [], faintAlerts = [];
   // M4 message collectors.
   const vehicleResultsA = [], taxiResultsA = [], motelResultsA = [], econResultsA = [], faintedMsgs = [];
+  // Traffic accident collector (2026-11-28).
+  const accidentMsgs = [];
   const statePlayer = (room, sid) => {
     try { return room.state && room.state.players.get(sid); } catch (e) { return null; }
   };
@@ -169,6 +173,8 @@ async function main() {
     roomA.onMessage('motel_result', (m) => motelResultsA.push(m));
     roomA.onMessage('fainted', (m) => faintedMsgs.push(m));
     roomB.onMessage('fainted', (m) => faintedMsgs.push(m));
+    roomA.onMessage('accident', (m) => accidentMsgs.push(m));
+    roomB.onMessage('accident', (m) => accidentMsgs.push(m));
     roomB.onMessage('job_result', (m) => jobResultsB.push(m));
     roomB.onMessage('revived', (m) => revivedMsgs.push(m));
     roomB.onMessage('interact_error', () => {});
@@ -754,6 +760,70 @@ async function main() {
     check('M4 revive with 50% mini-game -> no bonus, victim 30 HP',
       revive2Ok && pBrev2 && !pBrev2.isFainted && pBrev2.hp === 30,
       pBrev2 ? `victim hp=${pBrev2.hp}` : 'no state');
+
+    // ---- Solid collision + traffic accidents (2026-11-28) ----
+    // Traffic: 20 server-authoritative vehicles in state, all on roads.
+    const vehCount = roomA.state.vehicles ? roomA.state.vehicles.size : 0;
+    let vehOnRoad = 0;
+    if (roomA.state.vehicles) roomA.state.vehicles.forEach((v) => { if (RoadNet.inRoad(v.x, v.y)) vehOnRoad += 1; });
+    check('traffic: 20 server vehicles in state', vehCount === 20, `vehicles=${vehCount}`);
+    check('traffic: all vehicles on roads', vehOnRoad === vehCount, `${vehOnRoad}/${vehCount} on road`);
+    // Animals: 4 server-authoritative animals (2 dogs + 2 cats) in state.npcs.
+    let animalCount = 0;
+    if (roomA.state.npcs) roomA.state.npcs.forEach((n) => { if (n.type === 'animal') animalCount += 1; });
+    check('animals: 4 server animals in state.npcs', animalCount === 4,
+      `animals=${animalCount}, npcs=${roomA.state.npcs ? roomA.state.npcs.size : 0}`);
+    // Solid collision vs a tree: A starts 60px west of TREES[0] and walks
+    // east for 1 s — must stop at the trunk (16 + 12 = 28px), never through.
+    let seq = 100000;
+    const tree = Props.TREES[0];
+    await testSet(roomA, { x: tree[0] - 60, y: tree[1], hp: 100, cash: 100000 });
+    for (let i = 0; i < 20; i++) {
+      roomA.send('move', { seq: ++seq, dx: 1, dy: 0, sprint: false });
+      await sleep(50);
+    }
+    await sleep(300);
+    const pTree = statePlayer(roomA, roomA.sessionId);
+    const dTree = pTree ? Math.hypot(pTree.x - tree[0], pTree.y - tree[1]) : 0;
+    check('solid collision: player stops at a tree (cannot walk through)',
+      pTree && dTree >= 27 && pTree.x > tree[0] - 60,
+      `dist=${dTree.toFixed(1)}px, x=${pTree ? pTree.x.toFixed(0) : '?'}`);
+    // Solid collision vs another player: B stands at (400,520) (open
+    // grass, far from spawn/animals), A walks east into B — must stop at
+    // 32px (16 + 16), never through.
+    await testSet(roomB, { x: 400, y: 520, hp: 100 });
+    await testSet(roomA, { x: 340, y: 520, hp: 100, cash: 100000 });
+    for (let i = 0; i < 20; i++) {
+      roomA.send('move', { seq: ++seq, dx: 1, dy: 0, sprint: false });
+      await sleep(50);
+    }
+    await sleep(300);
+    const pAcol = statePlayer(roomA, roomA.sessionId), pBcol = statePlayer(roomA, roomB.sessionId);
+    const dAB = pAcol && pBcol ? Math.hypot(pAcol.x - pBcol.x, pAcol.y - pBcol.y) : 0;
+    check('solid collision: player cannot walk through another player',
+      pAcol && pBcol && dAB >= 31 && pAcol.x > 340, `dist=${dAB.toFixed(1)}px`);
+    // Accident: place A 55px ahead of the fastest car (in front of its
+    // nose — well inside the braking distance) and wait for the hit.
+    // Retry up to 3 times: the car may turn or stop at a light first.
+    // Penalty (exact user numbers): hospital, -30% cash, -10 HP.
+    let accOk = false;
+    for (let attempt = 0; attempt < 3 && !accOk; attempt++) {
+      let fv = null;
+      roomA.state.vehicles.forEach((v) => { if (!fv || v.speed > fv.speed) fv = v; });
+      if (!fv || fv.speed < 100) { await sleep(1000); continue; }
+      const ax = fv.x + Math.cos(fv.heading) * 55, ay = fv.y + Math.sin(fv.heading) * 55;
+      accidentMsgs.length = 0;
+      await testSet(roomA, { x: ax, y: ay, hp: 100, cash: 100000, bank: 0 });
+      accOk = await waitForMsg(accidentMsgs,
+        (m) => m.playerId === roomA.sessionId && m.lost === 30000, 4000);
+      if (!accOk) await testSet(roomA, { hp: 100, cash: 100000 });
+    }
+    await sleep(300);
+    const pAcc = statePlayer(roomA, roomA.sessionId);
+    check('traffic accident: hit by a car -> hospital, -30% cash, -10 HP',
+      accOk && pAcc && pAcc.cash === 70000 && pAcc.hp === 90
+        && Math.hypot(pAcc.x - 4125, pAcc.y - 1890) < 5,
+      pAcc ? `cash=${pAcc.cash} hp=${pAcc.hp} at (${pAcc.x.toFixed(0)},${pAcc.y.toFixed(0)})` : 'no state');
   } catch (err) {
     console.log('FAIL - test crashed:', err && err.message);
     failures += 1;

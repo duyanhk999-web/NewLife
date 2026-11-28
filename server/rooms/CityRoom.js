@@ -4,9 +4,10 @@
    Bots live in state.players (they look like normal players to the client);
    the guide + walkers live in state.npcs. */
 const { Room } = require('colyseus');
-const { PlayerState, NpcState, CityRoomState } = require('../schema');
+const { PlayerState, NpcState, VehicleState, CityRoomState } = require('../schema');
 const RoadNet = require('../../shared/roadnet');
 const Colliders = require('../../shared/colliders');
+const Props = require('../../shared/props');
 const BotBrain = require('../../shared/botBrain');
 const M3 = require('../../shared/m3');
 const { randomUUID } = require('crypto');
@@ -22,6 +23,16 @@ const SPAWN = { x: 2430, y: 2650 }; // Map v2 plaza south edge
 const CHAT_BUBBLE_MS = 4000;
 const NEARBY_RADIUS = 600;
 const FAINT_SECONDS = 60;
+// Solid collision + traffic accidents (2026-11-28): the player can no longer
+// walk through traffic, street props, animals, NPCs or other players
+// (shared/props.js is the single source of truth for prop positions).
+// Traffic seed lives in shared/roadnet.js (RoadNet.TRAFFIC_SEED).
+const ACCIDENT_COOLDOWN_MS = 3000; // one car cannot multi-hit the same person
+const ACCIDENT_MIN_SPEED = 30; // px/s — a crawling car does not count as a hit
+const ACCIDENT_CASH_PCT = 0.30; // hit penalty: lose 30% of CASH (not bank)
+const ACCIDENT_HP_LOSS = 10; // hit penalty: lose 10 HP
+const NPC_DOWN_MS = 3000; // NPC knocked down by a car stays down 3 s, then walks on
+const ANIMAL_WANDER_R = 220; // animals wander within 220px of their home spot
 // M3: test hook. The local test suite (server/test/test.js) sets
 // DTA_ALLOW_TEST=1 and may send '__test_set' to set its OWN player's
 // hp/hunger/cash so faint/doctor flows can be tested without waiting 25
@@ -94,6 +105,16 @@ class CityRoom extends Room {
     this.survival = new Map(); // playerId -> {hungerAcc, hpLossAcc, regenAcc, faintedUntil}
     this.bots = new Map(); // botId -> {personaId, brain, targetX, targetY, pauseUntil, speed, nextProactiveAt}
     this.walkers = new Map(); // npcId -> {targetX, targetY, pauseUntil, speed}
+    // Traffic + accidents (2026-11-28): server-authoritative sim (shared
+    // roadnet.js, fixed seed) — `traffic` is the sim list; `state.vehicles`
+    // mirrors it for clients. `_accidentAt`: last hit ms per person (player,
+    // bot, NPC, animal) — one car cannot multi-hit. `_npcDown`: npcId ->
+    // ms until which the NPC stays knocked down after a hit. `animals`:
+    // animalId -> {homeX, homeY, targetX, targetY, pauseUntil, speed}.
+    this.traffic = [];
+    this._accidentAt = new Map();
+    this._npcDown = new Map();
+    this.animals = new Map();
     this.pendingBotReplies = new Set(); // timeout handles, cleared on dispose
     this.economy = new Map(); // sessionId -> {inventory, txLog, processed, granted, atmDay} (M2, in-memory; Supabase RPC replaces in production)
     // M3 jobs (in-memory mirror of the player_jobs table shape, §5.4):
@@ -148,6 +169,8 @@ class CityRoom extends Room {
 
     this._spawnBots();
     this._spawnNpcs();
+    this._spawnTraffic();
+    this._spawnAnimals();
 
     // 100 ms simulation: bot + walker wandering (smooth enough for 20 Hz patches).
     this.setSimulationInterval((dtMs) => this._simStep(dtMs), 100);
@@ -221,6 +244,59 @@ class CityRoom extends Room {
         lastTalkLine: null,
       });
     }
+  }
+
+  // Server-authoritative traffic (2026-11-28): the server steps the shared
+  // RoadNet traffic sim (fixed seed, same as the client's offline sim) and
+  // mirrors it into state.vehicles so every client renders the same cars
+  // the server collides with and checks hits against.
+  _spawnTraffic() {
+    this.traffic = RoadNet.createTraffic(RoadNet.TRAFFIC_COUNT, RoadNet.mulberry32(RoadNet.TRAFFIC_SEED));
+    let carIdx = 0, bikeIdx = 0;
+    for (const v of this.traffic) {
+      const st = new VehicleState();
+      const color = v.kind === 'car'
+        ? RoadNet.CAR_COLORS[carIdx++ % RoadNet.CAR_COLORS.length]
+        : RoadNet.MOTORBIKE_TYPES[bikeIdx++ % RoadNet.MOTORBIKE_TYPES.length];
+      Object.assign(st, {
+        id: 'vehicle-' + v.id, kind: v.kind, color,
+        x: v.x, y: v.y, heading: v.heading, speed: v.speed,
+      });
+      this.state.vehicles.set(st.id, st);
+    }
+    console.log(`[city] traffic spawned: ${this.traffic.length} vehicles (seed ${RoadNet.TRAFFIC_SEED})`);
+  }
+
+  // Server-authoritative animals (2026-11-28): dogs + cats were client-only
+  // wanderers, so the server could not collide with them. They now live in
+  // state.npcs (type 'animal') and wander around their home spawns on the
+  // server; the client renders them from state online and keeps its local
+  // sim only offline. type stays 'animal' (the client maps animal-dog-0 →
+  // animals[0], etc.); avatar is the texture key ('dog' | 'cat').
+  _spawnAnimals() {
+    const spawns = (Colliders.ANIMALS || { dogs: [], cats: [] });
+    let di = 0, ci = 0;
+    for (const s of spawns.dogs) {
+      const npc = new NpcState();
+      Object.assign(npc, {
+        id: 'animal-dog-' + di, type: 'animal', name: 'Chó',
+        x: s.x, y: s.y, targetX: s.x, targetY: s.y, avatar: 'dog',
+      });
+      this.state.npcs.set(npc.id, npc);
+      this.animals.set(npc.id, { homeX: s.x, homeY: s.y, targetX: s.x, targetY: s.y, pauseUntil: 0, speed: 60 });
+      di++;
+    }
+    for (const s of spawns.cats) {
+      const npc = new NpcState();
+      Object.assign(npc, {
+        id: 'animal-cat-' + ci, type: 'animal', name: 'Mèo',
+        x: s.x, y: s.y, targetX: s.x, targetY: s.y, avatar: 'cat',
+      });
+      this.state.npcs.set(npc.id, npc);
+      this.animals.set(npc.id, { homeX: s.x, homeY: s.y, targetX: s.x, targetY: s.y, pauseUntil: 0, speed: 40 });
+      ci++;
+    }
+    console.log(`[city] animals spawned: ${di} dogs, ${ci} cats`);
   }
 
   // ---------------------------------------------------------------- join/leave
@@ -764,13 +840,18 @@ class CityRoom extends Room {
     const displacement = speed * dt * len;
     if (displacement > speed * dt * 1.1 + 1) { this._violation(client, 'speed-hack'); return; }
 
-    // 4. Collision vs buildings + fences + fountain (slide along walls) + 5. update position.
+    // 4. Solid collision (slide along obstacles) + 5. update position.
+    // Full collision (2026-11-28): map (buildings/fences/fountain) +
+    // street props (trees, lamps, benches, parked cars, crates...) +
+    // traffic vehicles (server sim) + NPCs/animals + other players. The
+    // client predicts the same _blockedFor logic in tryMove, so a legal
+    // move is never snapped back.
     const r = 16; // 32x32 hitbox, SRS §7.3
     let nx = player.x + dx * speed * dt;
     let ny = player.y + dy * speed * dt;
-    if (blocked(nx, ny, r)) {
-      if (!blocked(nx, player.y, r)) ny = player.y; // slide on X
-      else if (!blocked(player.x, ny, r)) nx = player.x; // slide on Y
+    if (this._blockedFor(nx, ny, r, client.sessionId)) {
+      if (!this._blockedFor(nx, player.y, r, client.sessionId)) ny = player.y; // slide on X
+      else if (!this._blockedFor(player.x, ny, r, client.sessionId)) nx = player.x; // slide on Y
       else { nx = player.x; ny = player.y; }
     }
     nx = clamp(nx, 20, 4780); ny = clamp(ny, 20, 4780);
@@ -805,6 +886,33 @@ class CityRoom extends Room {
       const ride = this.taxiRides.get(client.sessionId);
       if (ride) ride.distancePx += movedPx;
     }
+  }
+
+  // Full solid collision for a circle (x, y, r) — the server twin of the
+  // client's tryMove/blockedFull (same helpers, same data, so prediction
+  // and authority agree). Map + street props + traffic vehicles (oriented
+  // boxes from the server sim) + NPCs/animals + other players (circles
+  // r 16). `selfId` is excluded from the player check (a player never
+  // blocks themself). Fainted players still block — they are lying on the
+  // ground, walk around them.
+  _blockedFor(x, y, r, selfId) {
+    if (blocked(x, y, r)) return true; // buildings + fences + fountain
+    if (Props.hitProp(x, y, r)) return true; // trees, lamps, props
+    if (this.traffic) {
+      for (const v of this.traffic) {
+        if (RoadNet.hitVehicle(x, y, r, v)) return true;
+      }
+    }
+    for (const n of this.state.npcs.values()) {
+      const dx = x - n.x, dy = y - n.y;
+      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+    }
+    for (const [id, p] of this.state.players) {
+      if (id === selfId) continue;
+      const dx = x - p.x, dy = y - p.y;
+      if (dx * dx + dy * dy < (r + 16) * (r + 16)) return true;
+    }
+    return false;
   }
 
   _violation(client, kind) {
@@ -1832,16 +1940,43 @@ class CityRoom extends Room {
   // ---------------------------------------------------------------- simulation
   _simStep(dtMs) {
     const dt = dtMs / 1000;
+    const now = Date.now();
     // Bots: walk to target, pause 3-8 s, pick a new open target.
+    // (A bot knocked down by a car stays down 3 s — see _knockDownNpc.)
     for (const [botId, bot] of this.bots) {
       const p = this.state.players.get(botId);
       if (!p) continue;
+      if (now < (this._npcDown.get(botId) || 0)) continue;
       this._wander(p, bot, dt);
     }
     for (const [npcId, w] of this.walkers) {
       const n = this.state.npcs.get(npcId);
       if (!n) continue;
+      if (now < (this._npcDown.get(npcId) || 0)) continue;
       this._wanderNpc(n, w, dt);
+    }
+    // Animals: free wander around their home spot (server-authoritative).
+    for (const [animalId, a] of this.animals) {
+      const n = this.state.npcs.get(animalId);
+      if (!n) continue;
+      if (now < (this._npcDown.get(animalId) || 0)) continue;
+      this._stepAnimal(n, a, dt, now);
+    }
+    // Traffic: the server steps the shared sim (same seed as the client's
+    // offline sim) with the authoritative obstacles, then mirrors the cars
+    // into state.vehicles and checks for accidents.
+    if (this.traffic && this.traffic.length) {
+      const obstacles = [];
+      for (const p of this.state.players.values()) {
+        if (!p.isFainted) obstacles.push({ x: p.x, y: p.y });
+      }
+      for (const n of this.state.npcs.values()) obstacles.push({ x: n.x, y: n.y });
+      RoadNet.stepTraffic(this.traffic, dt, now, obstacles);
+      for (const v of this.traffic) {
+        const st = this.state.vehicles.get('vehicle-' + v.id);
+        if (st) { st.x = v.x; st.y = v.y; st.heading = v.heading; st.speed = v.speed; }
+      }
+      this._checkTrafficHits(now);
     }
   }
 
@@ -1857,6 +1992,122 @@ class CityRoom extends Room {
   _wanderNpc(n, entry, dt) {
     const w = RoadNet.stepWalker(entry.walker, dt, Date.now());
     n.x = w.x; n.y = w.y; n.targetX = w.x; n.targetY = w.y;
+  }
+
+  // Animals wander freely around their home spot (mirror of the client's
+  // spawnAnimal/updateAnimals): pick a target within ANIMAL_WANDER_R that
+  // is an open point and whose straight path never crosses a road or a
+  // blocked point, walk to it at the animal's speed, pause 3-8 s, repeat.
+  // Knocked-down animals (hit by a car) are held still by _simStep.
+  _stepAnimal(n, a, dt, now) {
+    if (now < a.pauseUntil) return;
+    const dx = a.targetX - n.x, dy = a.targetY - n.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 4) {
+      a.pauseUntil = now + 3000 + Math.random() * 5000;
+      for (let t = 0; t < 30; t++) {
+        const tx = n.x + (Math.random() * 2 - 1) * ANIMAL_WANDER_R;
+        const ty = n.y + (Math.random() * 2 - 1) * ANIMAL_WANDER_R;
+        if (!Colliders.isOpenPoint(tx, ty)) continue;
+        let ok = true;
+        for (let s = 0; s <= 20; s++) {
+          const px = n.x + (tx - n.x) * s / 20, py = n.y + (ty - n.y) * s / 20;
+          if (RoadNet.inRoad(px, py) || blocked(px, py, 14)) { ok = false; break; }
+        }
+        if (ok) { a.targetX = tx; a.targetY = ty; break; }
+      }
+      n.targetX = a.targetX; n.targetY = a.targetY;
+      return;
+    }
+    const step = a.speed * dt;
+    const ratio = Math.min(1, step / d);
+    n.x += dx * ratio; n.y += dy * ratio;
+    n.targetX = a.targetX; n.targetY = a.targetY;
+  }
+
+  // Traffic accidents (2026-11-28): a car that is braking for a pedestrian
+  // still hits them when the pedestrian is closer than the car's braking
+  // distance (v²/(2·DEC)) — too close to stop in time. Applies to players,
+  // bots and NPCs (incl. animals) standing ON the road (sidewalk
+  // pedestrians are never hit — cars cannot reach them). Fainted players
+  // are skipped (already down). One car cannot multi-hit the same person:
+  // 3 s cooldown per person.
+  _checkTrafficHits(now) {
+    for (const v of this.traffic) {
+      if (v.speed <= ACCIDENT_MIN_SPEED) continue;
+      for (const [id, p] of this.state.players) {
+        if (p.isFainted) continue;
+        if (!RoadNet.inRoad(p.x, p.y)) continue;
+        if (!RoadNet.hitVehicle(p.x, p.y, 16, v)) continue;
+        if (this.bots.has(id)) this._knockDownNpc(id, p.name, p.x, p.y, now);
+        else this._hitPlayer(id, p, v, now);
+      }
+      for (const [id, n] of this.state.npcs) {
+        if (!RoadNet.inRoad(n.x, n.y)) continue;
+        if (!RoadNet.hitVehicle(n.x, n.y, 16, v)) continue;
+        this._knockDownNpc(id, n.name, n.x, n.y, now);
+      }
+    }
+  }
+
+  // Player hit by traffic (exact user numbers, 2026-11-28): teleport to
+  // the hospital, lose 30% of CASH (not bank), lose 10 HP. NO hospital
+  // revive fee on top — the user specified only 30% money + 10 HP +
+  // hospital. A ridden vehicle is parked at the accident spot (like
+  // dismount) and any taxi ride ends with the fare so far. The active
+  // shipper order is KEPT (the player can walk back from the hospital).
+  // A hit that would drop HP to 0 or below is a normal faint instead: no
+  // teleport, no 30% loss — the faint flow (50% cash, 60 s, hospital fee)
+  // takes over within a second via _secondTick.
+  _hitPlayer(sessionId, player, vehicle, now) {
+    const last = this._accidentAt.get(sessionId) || 0;
+    if (now - last < ACCIDENT_COOLDOWN_MS) return;
+    this._accidentAt.set(sessionId, now);
+    if (player.hp <= ACCIDENT_HP_LOSS) {
+      player.hp = 0;
+      console.log(`[city] ${player.name} hit by ${vehicle.kind} at lethal HP — fainting instead`);
+      this.broadcast('accident', { playerId: sessionId, name: player.name, x: player.x, y: player.y, lethal: true, at: now });
+      return;
+    }
+    const lost = Math.floor(player.cash * ACCIDENT_CASH_PCT);
+    player.cash -= lost;
+    player.hp -= ACCIDENT_HP_LOSS;
+    const fromX = player.x, fromY = player.y;
+    // Park the ridden vehicle where the accident happened (like dismount).
+    const veh = this.vehicles.get(sessionId);
+    let vehicleLeft = false;
+    if (player.vehicleId && veh && veh[player.vehicleId]) {
+      const v = veh[player.vehicleId];
+      v.x = fromX; v.y = fromY; v.fuel = player.fuel; v.durability = player.durability;
+      vehicleLeft = true;
+    }
+    // End any taxi ride (driver or passenger) with the fare so far.
+    if (this.taxiRides.has(sessionId)) this._completeTaxiRide(sessionId, 'DROPOFF');
+    else {
+      for (const [driverId, ride] of this.taxiRides) {
+        if (ride.passengerId === sessionId) { this._completeTaxiRide(driverId, 'DROPOFF'); break; }
+      }
+    }
+    player.vehicleId = '';
+    this._syncVehicle(player);
+    player.x = HOSPITAL_SPAWN.x; player.y = HOSPITAL_SPAWN.y;
+    player.vx = 0; player.vy = 0; player.anim = 'idle';
+    const econ = this.economy.get(sessionId);
+    if (econ) this._econLog(econ, 'accident_loss', -lost, { cash_after: player.cash, hp: player.hp });
+    this._schedulePersist(sessionId);
+    console.log(`[city] ${player.name} hit by ${vehicle.kind} — hospital, -${lost}đ (30%), -10 HP`);
+    this.broadcast('accident', { playerId: sessionId, name: player.name, x: fromX, y: fromY, lost, hp: player.hp, vehicleLeft, at: now });
+  }
+
+  // NPC / bot / animal hit by traffic: falls down for 3 s, then recovers
+  // and keeps walking — no money or HP involved.
+  _knockDownNpc(id, name, x, y, now) {
+    const last = this._accidentAt.get(id) || 0;
+    if (now - last < ACCIDENT_COOLDOWN_MS) return;
+    this._accidentAt.set(id, now);
+    this._npcDown.set(id, now + NPC_DOWN_MS);
+    console.log(`[city] ${name} (${id}) knocked down by traffic — down 3 s`);
+    this.broadcast('accident', { npcId: id, name, x, y, at: now });
   }
 
   // 1 s tick: world clock, survival, faint auto-revive, bot proactive chat.
