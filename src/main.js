@@ -199,6 +199,10 @@
     car_taxi2_side: 'assets/vehicles/cars/car_taxi2_side.png',
     car_taxi2_down: 'assets/vehicles/cars/car_taxi2_down.png',
     car_taxi2_up: 'assets/vehicles/cars/car_taxi2_up.png',
+    // Blue HANOIBUS route 60 — traffic bus, same 3-direction scheme
+    car_bus_side: 'assets/vehicles/cars/car_bus_side.png',
+    car_bus_down: 'assets/vehicles/cars/car_bus_down.png',
+    car_bus_up: 'assets/vehicles/cars/car_bus_up.png',
     // VEHICLES FIX (2026-11-25): the bicycle had NO image at all (only the
     // motorbike prop existed). FLUX v2, high-angle, keyed out by
     // make_v3_sprites.py — used for the parked owned bike + the ridden bike
@@ -565,7 +569,7 @@
   // Old Kenney types (carTaxi/carSedan/...) stay in the TEX table because
   // the parked props at the police station/hospital/warehouse/cafe still
   // use carPolice/carAmbulance/carTruck/carTaxi (main.js ~893-896).
-  var CAR_COLORS = ['red', 'black', 'navy', 'taxi2'];
+  var CAR_COLORS = ['red', 'black', 'navy', 'taxi2', 'bus'];
   function spawnTraffic() {
     if (!world) return;
     var bikeIdx = 0, carIdx = 0;
@@ -659,15 +663,17 @@
         while (h > Math.PI) h -= 2 * Math.PI;
         while (h < -Math.PI) h += 2 * Math.PI;
         var ck = 'car_' + (v.carColor || 'red');
+        var isBus = v.carColor === 'bus';
+        var sideW = isBus ? 100 : 66, frontW = isBus ? 52 : 40;
         var sprTex, scaleX = 1, baseW = 40;
         if (h >= -Math.PI / 4 && h < Math.PI / 4) {
-          sprTex = TEX[ck + '_side']; scaleX = -1; baseW = 66;
+          sprTex = TEX[ck + '_side']; scaleX = -1; baseW = sideW;
         } else if (h >= Math.PI / 4 && h < 3 * Math.PI / 4) {
-          sprTex = TEX[ck + '_down']; scaleX = 1; baseW = 40;
+          sprTex = TEX[ck + '_down']; scaleX = 1; baseW = frontW;
         } else if (h >= -3 * Math.PI / 4 && h < -Math.PI / 4) {
-          sprTex = TEX[ck + '_up']; scaleX = 1; baseW = 40;
+          sprTex = TEX[ck + '_up']; scaleX = 1; baseW = frontW;
         } else {
-          sprTex = TEX[ck + '_side']; scaleX = 1; baseW = 66;
+          sprTex = TEX[ck + '_side']; scaleX = 1; baseW = sideW;
         }
         if (sprTex) {
           if (v.spr.texture !== sprTex) v.spr.texture = sprTex;
