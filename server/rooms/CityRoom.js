@@ -723,9 +723,10 @@ class CityRoom extends Room {
     data.lastSeq = seq;
     if (player.isFainted) return; // fainted players cannot move
 
-    // Rate-limit: 30 move/s.
+    // Rate-limit: 20 move/s (matches the client's 50 ms / 20 Hz send gate —
+    // the client never legitimately exceeds 20/s, so this only drops spam).
     data.moveTimes = data.moveTimes.filter((t) => now - t < 1000);
-    if (data.moveTimes.length >= 30) {
+    if (data.moveTimes.length >= 20) {
       console.log(`[city] move rate-limit ${client.sessionId}`);
       return;
     }
@@ -735,13 +736,14 @@ class CityRoom extends Room {
     // exceed maxSpeed * dt; if the client was idle (no move for >250 ms),
     // treat the first step as one 50 ms frame instead of jumping 0.5 s.
     const rawDt = (now - data.lastMoveAt) / 1000;
-    // LAG FIX: floor dt at 1 frame (rate limit is 30 move/s). Without the
-    // floor, moves arriving in a burst after a lag spike have rawDt ≈ 0
-    // so the player barely moves server-side while the client keeps
-    // predicting forward — then syncSelf snaps them back (rubber-band).
-    // A client spamming 30 move/s still cannot exceed nominal speed
-    // (30 × speed × 1/30 = speed), so the anti-speed-hack check is intact.
-    const dt = rawDt > 0.25 ? 0.05 : clamp(rawDt, 1 / 30, 0.25);
+    // LAG FIX: floor dt at 1 frame (rate limit is 20 move/s, matching the
+    // client's 20 Hz send rate). Without the floor, moves arriving in a
+    // burst after a lag spike have rawDt ≈ 0 so the player barely moves
+    // server-side while the client keeps predicting forward — then
+    // syncSelf snaps them back (rubber-band). A client spamming 20 move/s
+    // still cannot exceed nominal speed (20 × speed × 1/20 = speed), so
+    // the anti-speed-hack check is intact.
+    const dt = rawDt > 0.25 ? 0.05 : clamp(rawDt, 1 / 20, 0.25);
     data.lastMoveAt = now;
 
     // 3. Stamina: sprint blocked below 10 (fall back to walk). Sprint is
