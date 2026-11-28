@@ -56,7 +56,7 @@ function start(port) {
   gameServer.define('city', CityRoom);
 
   httpServer.listen(port, '0.0.0.0', () => {
-    console.log(`[server] Do Thi Ao city server listening on 0.0.0.0:${port} (env.PORT=${process.env.PORT || 'unset'}, room "city", maxClients 8)`);
+    console.log(`[server] Do Thi Ao city server listening on 0.0.0.0:${port} (env.PORT=${process.env.PORT || 'unset'}, room "city", maxClients 50)`);
   });
   return { httpServer, gameServer };
 }

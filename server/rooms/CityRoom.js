@@ -81,7 +81,7 @@ function randomOpenPointNearSpawn(maxR) {
 }
 
 class CityRoom extends Room {
-  maxClients = 8; // M1 acceptance: 8 players (SRS §2, §7.1: 16 later)
+  maxClients = 50; // Raised 2026-11-28 by user decision: 50 players (was 8, SRS §2, §7.1 planned 16 later)
   patchRate = 50; // 20 Hz
 
   onCreate() {
@@ -103,15 +103,18 @@ class CityRoom extends Room {
     //           deadlineAt, idempotencyKey, status, jobType, userId} | null
     //   doctor: {lastRewardedAt, revives: [{victimId, at, rewarded}]}
     this.jobs = new Map();
-    // M3 order pool (§6.2 first-come-first-served): 12 fixed delivery slots.
+    // M3 order pool (§6.2 first-come-first-served): 30 fixed delivery slots
+    // (raised 2026-11-28 from 12 when maxClients went 8 -> 50).
     // A slot is locked while its order is active; on release the slot gets a
     // NEW random target, so the next player always gets a different order.
-    // maxClients is 8, so the pool can never run dry in P0.
+    // With maxClients 50 a 30-slot pool CAN run dry while >30 players hold
+    // orders — slots free up on completion/cancel, and a full pool just
+    // means no new order until one frees (first-come-first-served, §6.2).
     // Multi-shop (user 2026-11-25): every slot ALSO has a pickup source
     // (M3.pickOrderSource: 50% warehouse, 50% a shop) — the player accepts
     // within 300px of THAT slot's pickup, not always at the warehouse.
     this.orderPool = [];
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 30; i++) {
       const src = M3.pickOrderSource();
       const t = M3.pickDeliveryPoint(null, src.id);
       this.orderPool.push({ id: 'ord-' + i, targetX: t.x, targetY: t.y, poiName: t.poiName, lockedBy: null,
