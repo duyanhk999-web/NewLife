@@ -244,6 +244,21 @@ class CityRoom extends Room {
         lastTalkLine: null,
       });
     }
+
+    // Cô Ba Sài Gòn (2026-11-28): a named walker NPC with animated action
+    // frames on the client (assets/characters/coba/). She wanders like the
+    // other walkers (90 px/s, pause 3-8 s), is knocked down by traffic like
+    // any NPC (_checkTrafficHits iterates state.npcs), and talks with the
+    // 'mai' persona fallback (npc_talk: personaId null -> 'mai').
+    const cobaWalker = RoadNet.createWalker(Math.floor(Math.random() * RoadNet.PED.length), { speed: 90 });
+    const coba = new NpcState();
+    Object.assign(coba, {
+      id: 'npc-coba', type: 'walker', name: 'Cô Ba',
+      x: cobaWalker.x, y: cobaWalker.y, targetX: cobaWalker.x, targetY: cobaWalker.y,
+      avatar: 'coba',
+    });
+    this.state.npcs.set(coba.id, coba);
+    this.walkers.set(coba.id, { walker: cobaWalker, personaId: null, lastTalkLine: null });
   }
 
   // Server-authoritative traffic (2026-11-28): the server steps the shared

@@ -300,7 +300,31 @@
     heroFull: 'assets/v3/hero-citizen-full.png', shipperFull: 'assets/v3/npc-shipper-full.png',
     breadFull: 'assets/v3/npc-bread-full.png', taxiFull: 'assets/v3/npc-taxi-standing-full.png',
     policeFull: 'assets/v3/npc-police-full.png', thugFull: 'assets/v3/npc-thug-full.png',
-    studentFull: 'assets/v3/npc-student-full.png'
+    studentFull: 'assets/v3/npc-student-full.png',
+    // Cô Ba Sài Gòn (2026-11-28): 5 action rows x 4 frames, side view facing
+    // left, from the sprite-sheet-gen pipeline. The 20 PNGs are uploaded
+    // separately (binary); until they land, each missing file loads as null
+    // and cô ba renders as the M0 code-drawn person — the game never breaks.
+    coba_stand_0: 'assets/characters/coba/stand_0.png',
+    coba_stand_1: 'assets/characters/coba/stand_1.png',
+    coba_stand_2: 'assets/characters/coba/stand_2.png',
+    coba_stand_3: 'assets/characters/coba/stand_3.png',
+    coba_walk_0: 'assets/characters/coba/walk_0.png',
+    coba_walk_1: 'assets/characters/coba/walk_1.png',
+    coba_walk_2: 'assets/characters/coba/walk_2.png',
+    coba_walk_3: 'assets/characters/coba/walk_3.png',
+    coba_run_0: 'assets/characters/coba/run_0.png',
+    coba_run_1: 'assets/characters/coba/run_1.png',
+    coba_run_2: 'assets/characters/coba/run_2.png',
+    coba_run_3: 'assets/characters/coba/run_3.png',
+    coba_ride_0: 'assets/characters/coba/ride_0.png',
+    coba_ride_1: 'assets/characters/coba/ride_1.png',
+    coba_ride_2: 'assets/characters/coba/ride_2.png',
+    coba_ride_3: 'assets/characters/coba/ride_3.png',
+    coba_fall_0: 'assets/characters/coba/fall_0.png',
+    coba_fall_1: 'assets/characters/coba/fall_1.png',
+    coba_fall_2: 'assets/characters/coba/fall_2.png',
+    coba_fall_3: 'assets/characters/coba/fall_3.png'
   };
   var FULL_TEX = { hero: 'heroFull', citizen: 'heroFull', guide: 'taxiFull', shipper: 'shipperFull', bread: 'breadFull', taxi: 'taxiFull', police: 'policeFull', thug: 'thugFull', student: 'studentFull' };
   // Building sprite per id (Map v2 §6): roof crops where FLUX drew a 3/4
@@ -334,7 +358,7 @@
   // ---------- app ----------
   var app, world, hud, nightOverlay, startOverlay;
   var player, playerGfx;
-  var npcs = [], tutorialNpc = null;
+  var npcs = [], tutorialNpc = null, cobaNpc = null; // cobaNpc: Cô Ba Sài Gòn walker (see COBA_FRAMES)
   var animals = []; // Map v2 §7: dogs + cats, visual-only wanderers (no gameplay)
   var traffic = []; // 2026-11-25: ambient moving cars/motorbikes on the roads (visual only)
   // Server-authoritative traffic (2026-11-28): online, cars come from
@@ -454,6 +478,66 @@
   var WALKER_PERSONAS = ['tung', 'lan', 'cong', 'ty', 'mai'];
   var NPC_NAMES = ['An', 'Bình', 'Chi', 'Dũng', 'Hà', 'Khánh', 'Linh', 'Minh', 'Ngọc', 'Phúc', 'Thu', 'Tuấn'];
   var NPC_COLORS = [0xe74c3c, 0x3498db, 0x2ecc71, 0xf39c12, 0x9b59b6, 0x1abc9c, 0xfd79a8, 0x00b894, 0x6c5ce7, 0xd63031, 0x0984e3, 0xe17055];
+  // Cô Ba Sài Gòn (2026-11-28): an animated walker NPC — 5 action rows x 4
+  // frames, side view facing left, from assets/characters/coba/ (the
+  // sprite-sheet-gen pipeline: one standing frame first, then a 5x4 sheet,
+  // sliced + decontaminated). The frames load like every other texture
+  // (per-file try/catch in loadTextures): a 404 leaves TEX[k] null and the
+  // animator keeps the current texture, so this code is safe to ship
+  // BEFORE the 20 PNGs are uploaded — until they land, cô ba renders as
+  // the M0 code-drawn person (makeFullBody fallback) and animates nothing.
+  var COBA_FRAMES = {
+    stand: ['coba_stand_0', 'coba_stand_1', 'coba_stand_2', 'coba_stand_3'],
+    walk: ['coba_walk_0', 'coba_walk_1', 'coba_walk_2', 'coba_walk_3'],
+    run: ['coba_run_0', 'coba_run_1', 'coba_run_2', 'coba_run_3'],
+    ride: ['coba_ride_0', 'coba_ride_1', 'coba_ride_2', 'coba_ride_3'],
+    fall: ['coba_fall_0', 'coba_fall_1', 'coba_fall_2', 'coba_fall_3']
+  };
+  var COBA_FRAME_MS = { stand: 200, walk: 150, run: 100, ride: 150, fall: 750 };
+  var COBA_RUN_SPEED = 120; // px/s: faster than this the walk becomes a run
+  // Pure state selection (extracted by test/coba-check.js). Priority:
+  // knocked down > riding > fast > moving > idle. The ride state has no
+  // live trigger yet (no NPC rides a motorbike in the game today — the
+  // traffic bikes have no riders); n.riding is the hook for it.
+  function cobaAnimState(down, riding, moving, speed) {
+    if (down) return 'fall';
+    if (riding) return 'ride';
+    if (moving && speed > COBA_RUN_SPEED) return 'run';
+    if (moving) return 'walk';
+    return 'stand';
+  }
+  // Advance cô ba's animation one tick and swap the inner sprite texture.
+  // n.cobaSpr is null while the M0 fallback drew instead (no PNGs yet) —
+  // then this is a no-op. A null frame texture is skipped, never applied.
+  function updateCobaAnim(n, dt, moving, speed) {
+    if (!n.cobaSpr) return;
+    var down = !!(n.downUntil && Date.now() < n.downUntil);
+    var state = cobaAnimState(down, !!n.riding, moving, speed);
+    if (state !== n.animState) {
+      n.animState = state; n.animFrame = 0; n.animTime = 0;
+      cobaApplyFrame(n);
+    }
+    n.animTime += dt * 1000;
+    var step = COBA_FRAME_MS[state];
+    if (n.animTime >= step) {
+      n.animTime = 0;
+      var frames = COBA_FRAMES[state];
+      // fall plays once and holds the last frame (lying flat) while down;
+      // the other states loop.
+      if (state === 'fall') n.animFrame = Math.min(n.animFrame + 1, frames.length - 1);
+      else n.animFrame = (n.animFrame + 1) % frames.length;
+      cobaApplyFrame(n);
+    }
+  }
+  function cobaApplyFrame(n) {
+    var tex = TEX[COBA_FRAMES[n.animState][n.animFrame]];
+    if (!tex) return;
+    if (n.cobaSpr.texture !== tex) n.cobaSpr.texture = tex;
+    // Frames differ slightly in height (stand 400, run 367): re-apply the
+    // 40px world height so the swap never changes her rendered size.
+    n.cobaSpr.height = CHAR_H;
+    n.cobaSpr.width = CHAR_H * tex.width / tex.height;
+  }
   var TALK_LINES = [
     'Chào bạn! Thành phố hôm nay đông vui lắm.',
     'Đi làm Shipper kiếm tiền nhanh lắm, thử đi.',
@@ -1292,6 +1376,37 @@
     tutLabel.zIndex = 99999; // UI label: always above movers
     world.addChild(tutLabel);
     cullables.push({ obj: tutLabel, x: 2330, y: 2485, w: 200, h: 36 });
+
+    // Cô Ba Sài Gòn (2026-11-28): a named walker NPC with 5 animated action
+    // rows (stand/walk/run/ride/fall) from assets/characters/coba/. She
+    // walks like the other walkers (server id 'npc-coba', speed 90) and her
+    // sprite animates in updateNPCs. personaId null: talk falls back to the
+    // generic TALK_LINES offline and the 'mai' persona online (server
+    // npc_talk). Created AFTER the guide so npcs[0..9] stay the walkers
+    // (syncNpc maps them by index). Until the 20 PNGs are uploaded,
+    // TEX.coba_stand_0 is null and she renders as the M0 code-drawn person.
+    var cobaWalker = RoadNet.createWalker(Math.floor(Math.random() * RoadNet.PED.length), { speed: 90 });
+    var cobaSp = { x: cobaWalker.x, y: cobaWalker.y };
+    var cobaCont = makeFullBody(TEX.coba_stand_0 || null, 'Cô Ba');
+    cobaCont.position.set(cobaSp.x, cobaSp.y);
+    cobaCont.eventMode = 'static';
+    cobaCont.cursor = 'pointer';
+    cobaCont.on('pointerdown', onWorldPointerDown);
+    var cobaFace = (cobaCont.userData && cobaCont.userData.face) || cobaCont;
+    var cobaSpr = null;
+    if (cobaFace.children && cobaFace.children.length && cobaFace.children[0] instanceof PIXI.Sprite) cobaSpr = cobaFace.children[0];
+    var cobaObj = {
+      id: 'npc-coba', personaId: null, lastTalkLine: null,
+      container: cobaCont, face: cobaFace, cobaSpr: cobaSpr,
+      x: cobaSp.x, y: cobaSp.y, walker: cobaWalker,
+      speed: 90, name: 'Cô Ba', color: 0xfd79a8, isTutorial: false, isCoba: true,
+      animState: 'stand', animFrame: 0, animTime: 0, riding: false
+    };
+    cobaCont.userData = cobaObj;
+    cobaNpc = cobaObj;
+    world.addChild(cobaCont);
+    npcs.push(cobaObj);
+    cullables.push({ obj: cobaCont, x: cobaSp.x - 20, y: cobaSp.y - 30, w: 40, h: 60 });
 
     // player (M2: full-body hero sprite + shadow; M0 code-drawn person as fallback)
     player = makeFullBody(TEX.heroFull, playerState.name);
@@ -2578,6 +2693,12 @@
     npcs.forEach(function (n) {
       if (n.speed === 0 && netMode !== 'online') return; // tutorial NPC stays put (offline)
       if (netMode === 'online') {
+        // Cô Ba knocked down (onAccident sets downUntil): hold the fall
+        // frames for the same 3 s the server holds her down, then walk on.
+        if (n.isCoba && n.downUntil && Date.now() < n.downUntil) {
+          updateCobaAnim(n, dt, false, 0);
+          return;
+        }
         // server-driven: interpolate toward the server target (n.tx/n.ty,
         // set from state.npcs patches; guide target never moves)
         var tdx = (n.tx !== undefined ? n.tx : n.x) - n.x;
@@ -2585,7 +2706,8 @@
         var td = Math.hypot(tdx, tdy);
         if (td > 1) {
           var k = Math.min(1, dt * 10);
-          n.x += tdx * k; n.y += tdy * k;
+          var movedX = tdx * k, movedY = tdy * k;
+          n.x += movedX; n.y += movedY;
           n.container.position.set(n.x, n.y);
           n.container.zIndex = n.y; // y-sorted with the player / traffic
           // FLIP AUDIT (2026-11-25, dog streak): flip the inner FACE
@@ -2596,13 +2718,20 @@
           var faceO = n.face || n.container;
           if (tdx < -0.5) faceO.scale.x = -1;
           else if (tdx > 0.5) faceO.scale.x = 1;
+          if (n.isCoba) updateCobaAnim(n, dt, true, dt > 0 ? Math.hypot(movedX, movedY) / dt : 0);
+        } else if (n.isCoba) {
+          updateCobaAnim(n, dt, false, 0);
         }
         return;
       }
       // Knocked down by a car (offline accident): stay down 3 s, then walk on.
-      if (n.downUntil && Date.now() < n.downUntil) return;
+      if (n.downUntil && Date.now() < n.downUntil) {
+        if (n.isCoba) updateCobaAnim(n, dt, false, 0);
+        return;
+      }
       var w = RoadNet.stepWalker(n.walker, dt, signalNow());
       var stepX = w.x - n.x;
+      var stepY = w.y - n.y;
       n.x = w.x; n.y = w.y;
       n.container.position.set(n.x, n.y);
       n.container.zIndex = n.y; // y-sorted with the player / traffic
@@ -2611,6 +2740,10 @@
       var faceW = n.face || n.container;
       if (stepX < -0.1) faceW.scale.x = -1;
       else if (stepX > 0.1) faceW.scale.x = 1;
+      if (n.isCoba) {
+        var moved = Math.hypot(stepX, stepY);
+        updateCobaAnim(n, dt, moved > 0.5, dt > 0 ? moved / dt : 0);
+      }
     });
   }
 
@@ -3215,6 +3348,10 @@
     else if (n.id.indexOf('npc-walker-') === 0) {
       var idx = parseInt(n.id.slice('npc-walker-'.length), 10);
       if (!isNaN(idx) && npcs[idx]) local = npcs[idx];
+    } else if (n.id === 'npc-coba') {
+      // Cô Ba Sài Gòn (2026-11-28): mapped by id, never by npcs[] index —
+      // she is npcs[11], after the 10 walkers and the guide.
+      if (cobaNpc) local = cobaNpc;
     } else if (n.id.indexOf('animal-') === 0) {
       // Server-authoritative animals (2026-11-28): 'animal-dog-0' →
       // animals[0], 'animal-cat-0' → animals[dogs.length] (dogs are
@@ -3323,6 +3460,10 @@
           appendChatLog('', '', '🚑 ' + msg.name + ' bị xe đâm, ngã xuống đường!', true);
           vfx('faint', msg.x, msg.y);
           showBubble(msg.x, msg.y, '💫', 2500);
+          // Cô Ba falls visually for the same 3 s the server holds her down
+          // (see updateNPCs online branch); other walkers have no fall
+          // frames, so only she gets the local down state.
+          if (msg.npcId === 'npc-coba' && cobaNpc) cobaNpc.downUntil = Date.now() + 3000;
         }
       },
       onNpcRemoved: function (id) {

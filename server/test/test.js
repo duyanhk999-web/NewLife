@@ -1,6 +1,6 @@
 /* Đô Thị Ảo — M1 headless test (colyseus.js client).
    Starts the real server on a test port, connects 2 clients, asserts:
-     1. both clients see each other in state (+ 6 bots + 11 NPCs present)
+     1. both clients see each other in state (+ 6 bots + 12 NPCs present)
      2. a move from A changes A's x server-side (visible to B)
      3. a world chat from A is received by B
      4. "chào Tùng" (nearby) gets a bot reply within 5 s
