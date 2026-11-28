@@ -710,7 +710,12 @@ class CityRoom extends Room {
       return;
     }
     const len = Math.hypot(dx, dy);
-    if (len > 1 + 1e-6) { this._violation(client, 'move-vector'); return; }
+    // Move-vector tolerance 1.05 (was 1 + 1e-6): the client rounds the
+    // normalized move vector to 3 decimals (Math.round(v*1000)/1000), so a
+    // legit full-tilt vector can arrive with len up to ~1.0006. A real cheat
+    // sends a much larger vector, so 1.05 has wide margin — do NOT count
+    // rounding noise as cheating (it kicked players on >half of all angles).
+    if (len > 1.05) { this._violation(client, 'move-vector'); return; }
     if (seq <= data.lastSeq) return; // stale / duplicate
     data.lastSeq = seq;
     if (player.isFainted) return; // fainted players cannot move
