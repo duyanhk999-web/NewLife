@@ -11,7 +11,11 @@
    shipper accept->deliver->duplicate, NPC talk, faint->hospital fee,
    doctor revive + cooldown). The live tests use the env-gated '__test_set'
    hook (DTA_ALLOW_TEST=1, set below before the server is required) to
-   teleport/set stats — never enabled in production. */
+   teleport/set stats — never enabled in production.
+   Phase C (2026-11-28): pure BotBrain tiers/time lines + M3 schedule/bot
+   job helpers; live talk-tier progression (8 talks), accident reactions
+   (via the env-gated '__test_react' hook), and bot job choice (a bot
+   working far from the plaza / showing a job bubble). */
 process.env.DTA_ALLOW_TEST = '1';
 const { Client } = require('colyseus.js');
 const { start } = require('../index');
@@ -54,6 +58,8 @@ async function main() {
   const vehicleResultsA = [], taxiResultsA = [], motelResultsA = [], econResultsA = [], faintedMsgs = [];
   // Traffic accident collector (2026-11-28).
   const accidentMsgs = [];
+  // Phase C accident-reaction collector.
+  const reactMsgs = [];
   const statePlayer = (room, sid) => {
     try { return room.state && room.state.players.get(sid); } catch (e) { return null; }
   };
@@ -158,6 +164,61 @@ async function main() {
   check('M4 revive mini-game 89% -> +0 HP', M3.doctorMinigameBonus(89) === 0, String(M3.doctorMinigameBonus(89)));
   check('M4 revive mini-game clamps >100 to 100', M3.doctorMinigameBonus(150) === 20, String(M3.doctorMinigameBonus(150)));
 
+  // ---- Phase C pure (2026-11-28): memory tiers, time lines, schedule, bot jobs ----
+  // Memory tiers: 0-2 stranger, 3-7 acquaintance, 8+ friend.
+  check('Phase C talkTier 0/2->0, 3/7->1, 8/100->2',
+    BotBrain.talkTier(0) === 0 && BotBrain.talkTier(2) === 0 &&
+    BotBrain.talkTier(3) === 1 && BotBrain.talkTier(7) === 1 &&
+    BotBrain.talkTier(8) === 2 && BotBrain.talkTier(100) === 2);
+  check('Phase C talkTierName 0/1/2 = Người lạ / Quen biết / Bạn bè',
+    BotBrain.talkTierName(0) === 'Người lạ' && BotBrain.talkTierName(1) === 'Quen biết' &&
+    BotBrain.talkTierName(2) === 'Bạn bè');
+  check('Phase C timePeriod morning/noon/evening/night',
+    BotBrain.timePeriod(360) === 'morning' && BotBrain.timePeriod(660) === 'noon' &&
+    BotBrain.timePeriod(780) === 'evening' && BotBrain.timePeriod(1080) === 'night' &&
+    BotBrain.timePeriod(0) === 'night');
+  check('Phase C every persona has friend/close/time/react lines',
+    BotBrain.PERSONAS.every((p) =>
+      p.friendLines && p.friendLines.length === 2 &&
+      p.closeLines && p.closeLines.length === 2 &&
+      p.timeLines && p.timeLines.morning && p.timeLines.noon && p.timeLines.evening && p.timeLines.night &&
+      p.reactLines && p.reactLines.length === 2));
+  check('Phase C pickTalkLine tier pools + time branch (seeded)',
+    (() => {
+      const t = BotBrain.PERSONAS[0];
+      const hi = () => 0.9, lo = () => 0.1;
+      return BotBrain.pickTalkLine(t, 0, 'morning', null, hi) === t.lines[2] &&
+        BotBrain.pickTalkLine(t, 1, 'morning', null, hi) === t.friendLines[1] &&
+        BotBrain.pickTalkLine(t, 2, 'morning', null, hi) === t.closeLines[1] &&
+        BotBrain.pickTalkLine(t, 0, 'morning', null, lo) === t.timeLines.morning;
+    })());
+  // Daily schedule: morning market/shop, noon food/shop, 13-17 roam,
+  // evening cafe/plaza, 21-06 night (half go home — caller-side).
+  check('Phase C schedulePeriod morning/noon/roam/evening/night',
+    M3.schedulePeriod(360) === 'morning' && M3.schedulePeriod(660) === 'noon' &&
+    M3.schedulePeriod(780) === 'roam' && M3.schedulePeriod(1020) === 'evening' &&
+    M3.schedulePeriod(1260) === 'night' && M3.schedulePeriod(0) === 'night');
+  check('Phase C scheduleSpots morning/evening, roam/night empty',
+    M3.scheduleSpots('morning').length === 2 && M3.scheduleSpots('evening').length === 2 &&
+    M3.scheduleSpots('roam').length === 0 && M3.scheduleSpots('night').length === 0 &&
+    M3.scheduleSpots('morning')[0].x === 4155 && M3.scheduleSpots('evening')[0].x === 2760);
+  // Bot job choice: best free shipper slot vs best waiting taxi customer.
+  check('Phase C bestShipperPayFor skips locked slots',
+    M3.bestShipperPayFor([
+      { pickupX: 4155, pickupY: 2910, targetX: 2430, targetY: 2650, lockedBy: null },
+      { pickupX: 3225, pickupY: 1565, targetX: 4125, targetY: 1635, lockedBy: 'x' },
+    ], false).pay === 16000);
+  check('Phase C bestTaxiPayFor picks the highest fare',
+    M3.bestTaxiPayFor([
+      { npcId: 'a', x: 1230, y: 1230, destX: 2430, destY: 2650 },
+      { npcId: 'b', x: 2430, y: 1230, destX: 2430, destY: 2650 },
+    ], false).pay === 19000);
+  check('Phase C chooseBotJob higher pay wins, tie -> shipper, none -> null',
+    M3.chooseBotJob({ pay: 15000 }, { pay: 20000 }) === 'taxi' &&
+    M3.chooseBotJob({ pay: 20000 }, { pay: 15000 }) === 'shipper' &&
+    M3.chooseBotJob({ pay: 15000 }, { pay: 15000 }) === 'shipper' &&
+    M3.chooseBotJob(null, null) === null);
+
   try {
     roomA = await client.joinOrCreate('city', { name: 'TestA', avatar: 'hero' });
     roomB = await client.joinOrCreate('city', { name: 'TestB', avatar: 'student' });
@@ -174,6 +235,7 @@ async function main() {
     roomA.onMessage('fainted', (m) => faintedMsgs.push(m));
     roomB.onMessage('fainted', (m) => faintedMsgs.push(m));
     roomA.onMessage('accident', (m) => accidentMsgs.push(m));
+    roomA.onMessage('npc_react', (m) => reactMsgs.push(m)); // Phase C reactions
     roomB.onMessage('accident', (m) => accidentMsgs.push(m));
     roomB.onMessage('job_result', (m) => jobResultsB.push(m));
     roomB.onMessage('revived', (m) => revivedMsgs.push(m));
@@ -426,11 +488,77 @@ async function main() {
       const talkOk = await waitForMsg(npcTalksA, (m) => m.npcId === 'npc-walker-0' && !m.isGuide);
       const talkMsg = npcTalksA.find((m) => m.npcId === 'npc-walker-0');
       const persona = BotBrain.PERSONAS.find((pp) => pp.id === (talkMsg && talkMsg.personaId));
+      // Phase C: the line may come from the tier pool or a time greeting.
+      const allLines = persona ? persona.lines.concat(persona.friendLines || [], persona.closeLines || [],
+        Object.values(persona.timeLines || {})) : [];
       check('M3 talk to walker returns a persona line',
-        talkOk && !!talkMsg && !!persona && persona.lines.includes(talkMsg.text),
+        talkOk && !!talkMsg && !!persona && allLines.includes(talkMsg.text),
         talkMsg ? `${talkMsg.personaId}: "${talkMsg.text}"` : 'no reply');
     } else {
       check('M3 talk to walker returns a persona line', false, 'walker-0 missing');
+    }
+
+    // ---- Phase C live: player memory tiers (walker-1, fresh counts) ----
+    // Talk 8 times to npc-walker-1 (re-teleporting next to it each time,
+    // it wanders 90px/s): tier 0 -> 1 at talk 3, -> 2 at talk 8.
+    let tierOk = true, tierDetail = '';
+    for (let talk = 1; talk <= 8; talk++) {
+      const w1 = roomA.state && roomA.state.npcs ? roomA.state.npcs.get('npc-walker-1') : null;
+      if (!w1) { tierOk = false; tierDetail = 'walker-1 missing'; break; }
+      await testSet(roomA, { x: w1.x, y: w1.y + 60 });
+      npcTalksA.length = 0;
+      roomA.send('interact', { action: 'talk', targetId: 'npc-walker-1' });
+      const ok = await waitForMsg(npcTalksA, (m) => m.npcId === 'npc-walker-1' && !m.isGuide, 3000);
+      const m = npcTalksA.find((mm) => mm.npcId === 'npc-walker-1');
+      const wantTier = talk >= 8 ? 2 : talk >= 3 ? 1 : 0;
+      const wantName = ['Người lạ', 'Quen biết', 'Bạn bè'][wantTier];
+      if (!ok || !m || m.tier !== wantTier || m.tierName !== wantName || m.talks !== talk) {
+        tierOk = false;
+        tierDetail = `talk ${talk}: got tier=${m && m.tier} name=${m && m.tierName} talks=${m && m.talks}`;
+        break;
+      }
+      // The line must come from the right tier pool (or a time greeting).
+      const p1 = BotBrain.PERSONAS.find((pp) => pp.id === m.personaId);
+      const tierPool = wantTier === 2 ? p1.closeLines : wantTier === 1 ? p1.friendLines : p1.lines;
+      const timePool = Object.values(p1.timeLines || {});
+      if (tierPool.indexOf(m.text) < 0 && timePool.indexOf(m.text) < 0) {
+        tierOk = false; tierDetail = `talk ${talk}: line not in tier ${wantTier} pool: "${m.text}"`;
+        break;
+      }
+    }
+    check('Phase C talk tiers 0->1 at 3rd talk, 1->2 at 8th (talks/tier/tierName)', tierOk, tierDetail);
+
+    // ---- Phase C live: accident reactions (via __test_react) ----
+    const rw0 = roomA.state && roomA.state.npcs ? roomA.state.npcs.get('npc-walker-0') : null;
+    if (rw0) {
+      const rx = rw0.x, ry = rw0.y;
+      reactMsgs.length = 0;
+      roomA.send('__test_react', { x: rx, y: ry });
+      const reactOk = await waitForMsg(reactMsgs, (m) => m.npcs && m.npcs.some((n) => n.npcId === 'npc-walker-0'), 3000);
+      const reactMsg = reactMsgs.find((m) => m.npcs && m.npcs.some((n) => n.npcId === 'npc-walker-0'));
+      const reacted0 = reactMsg && reactMsg.npcs.find((n) => n.npcId === 'npc-walker-0');
+      const tungPersona = BotBrain.PERSONAS.find((pp) => pp.id === 'tung');
+      check('Phase C accident reaction: walker at the spot reacts with a react line',
+        reactOk && !!reacted0 && tungPersona.reactLines.includes(reacted0.line),
+        reacted0 ? `"${reacted0.line}"` : 'no npc_react');
+      // A walker far away (>500px) must NOT react.
+      let farId = null;
+      roomA.state.npcs.forEach((n) => {
+        if (n.id && n.id.startsWith('npc-walker-') && Math.hypot(n.x - rx, n.y - ry) > 500) farId = n.id;
+      });
+      if (farId && reactMsg) {
+        check('Phase C accident reaction: far walker (>500px) does not react',
+          !reactMsg.npcs.some((n) => n.npcId === farId), farId);
+      }
+      // The reacting walker stays paused (position frozen ~1.5 s later).
+      const posBefore = { x: rw0.x, y: rw0.y };
+      await sleep(1500);
+      const rw0b = roomA.state.npcs.get('npc-walker-0');
+      check('Phase C accident reaction: reacting walker pauses (frozen 1.5 s)',
+        !!rw0b && Math.hypot(rw0b.x - posBefore.x, rw0b.y - posBefore.y) < 2,
+        rw0b ? `moved ${Math.hypot(rw0b.x - posBefore.x, rw0b.y - posBefore.y).toFixed(1)}px` : 'walker gone');
+    } else {
+      check('Phase C accident reaction: walker at the spot reacts with a react line', false, 'walker-0 missing');
     }
 
     // ---- M4 live protocol (§14.4 v2.2, §7.2, §8) ----
@@ -858,6 +986,26 @@ async function main() {
       accOk && pAcc && pAcc.cash === 70000 && pAcc.hp === 90
         && Math.hypot(pAcc.x - 4125, pAcc.y - 1890) < 5,
       pAcc ? `cash=${pAcc.cash} hp=${pAcc.hp} at (${pAcc.x.toFixed(0)},${pAcc.y.toFixed(0)})` : 'no state');
+
+    // ---- Phase C live: bot job choice ----
+    // Bots decide within ~3-13 s of room start and then walk to far
+    // pickups (all shipper sources are >900px from the plaza, while idle
+    // bots never leave their 900px home radius). Poll up to 20 s for
+    // either a bot >950px from the plaza or a job bubble.
+    let botJobOk = false, botJobDetail = '';
+    for (let i = 0; i < 40 && !botJobOk; i++) {
+      await sleep(500);
+      try {
+        roomB.state.players.forEach((p) => {
+          if (!p || !p.id || !p.id.startsWith('bot-')) return;
+          if (Math.hypot(p.x - 2430, p.y - 2650) > 950) { botJobOk = true; botJobDetail = p.id + ' far from plaza'; }
+          if (p.chatBubble && /giao hàng|chở khách|Đã lấy hàng|Đã đón khách/.test(p.chatBubble)) {
+            botJobOk = true; botJobDetail = p.id + ': "' + p.chatBubble + '"';
+          }
+        });
+      } catch (e) { /* state not ready yet */ }
+    }
+    check('Phase C bot job choice: a bot works far from the plaza / shows a job bubble', botJobOk, botJobDetail);
   } catch (err) {
     console.log('FAIL - test crashed:', err && err.message);
     failures += 1;

@@ -1049,6 +1049,7 @@
           appendChatLog('', '', '🚑 ' + (n.name || 'NPC') + ' bị xe đâm, ngã xuống đường!', true);
           showBubble(n.x, n.y, '💫', 2500);
           vfx('faint', n.x, n.y, n.container);
+          offlineNpcReact(n.x, n.y, n.id);
         }
       }
       for (j = 0; j < animals.length; j++) {
@@ -1060,8 +1061,31 @@
           appendChatLog('', '', '🚑 ' + (n.kind === 'cat' ? 'Mèo' : 'Chó') + ' bị xe đâm, ngã xuống đường!', true);
           showBubble(n.x, n.y, '💫', 2500);
           vfx('faint', n.x, n.y, n.container);
+          offlineNpcReact(n.x, n.y, null);
         }
       }
+    }
+  }
+  // Phase C: offline accident reactions — same rules as the server:
+  // walkers within 400px pause 4 s, face the spot (updateNPCs reads
+  // reactUntil) and show a reaction line. Cô Ba gets bubble + pause
+  // only (her animator owns her flip). The victim never reacts; NPCs
+  // already knocked down stay down.
+  function offlineNpcReact(x, y, excludeId) {
+    if (typeof BotBrain === 'undefined') return;
+    var now = Date.now();
+    for (var j = 0; j < npcs.length; j++) {
+      var w = npcs[j];
+      if (!w || w.id === excludeId || w.isTutorial) continue;
+      if (w.downUntil && now < w.downUntil) continue;
+      if (Math.hypot(w.x - x, w.y - y) > 400) continue;
+      if (w.walker) w.walker.pauseUntil = now + 4000;
+      var persona = null;
+      BotBrain.PERSONAS.forEach(function (p) { if (p.id === (w.personaId || 'mai')) persona = p; });
+      var line = persona ? BotBrain.pickReactLine(persona, w.lastTalkLine) : 'Trời ơi, tai nạn kìa!';
+      w.lastTalkLine = line;
+      w.reactUntil = now + 4000; w.reactX = x; w.reactY = y;
+      showBubble(w.x, w.y, line, 4000);
     }
   }
   // Offline hit penalty — the exact user numbers, applied locally:
@@ -1078,6 +1102,8 @@
     var lost = Math.floor(playerState.cash * 0.3);
     playerState.cash -= lost;
     playerState.hp -= 10;
+    // Phase C: nearby walkers react to the accident (before the teleport).
+    offlineNpcReact(playerState.x, playerState.y, null);
     var hSpawn = (typeof M3 !== 'undefined' && M3.HOSPITAL_SPAWN) ? M3.HOSPITAL_SPAWN : { x: 4125, y: 1890 };
     playerState.x = hSpawn.x; playerState.y = hSpawn.y;
     playerState.vx = 0; playerState.vy = 0; playerState.anim = 'idle';
@@ -1445,7 +1471,8 @@
       var obj = {
         id: 'npc-walker-' + n, personaId: personaId, lastTalkLine: null,
         container: npc, face: npcFace, x: sp.x, y: sp.y, walker: walker,
-        speed: 90, name: NPC_NAMES[n % NPC_NAMES.length],
+        speed: 90, homePos: { x: sp.x, y: sp.y }, schedIdx: n,
+        name: NPC_NAMES[n % NPC_NAMES.length],
         color: NPC_COLORS[n % NPC_COLORS.length], isTutorial: false
       };
       npc.userData = obj;
@@ -1511,7 +1538,8 @@
       id: 'npc-coba', personaId: null, lastTalkLine: null,
       container: cobaCont, face: cobaFace, cobaSpr: cobaSpr,
       x: cobaSp.x, y: cobaSp.y, walker: cobaWalker,
-      speed: 90, name: 'Cô Ba', color: 0xfd79a8, isTutorial: false, isCoba: true,
+      speed: 90, homePos: { x: cobaSp.x, y: cobaSp.y }, schedIdx: 10,
+      name: 'Cô Ba', color: 0xfd79a8, isTutorial: false, isCoba: true,
       animState: 'stand_front', animFrame: 0, animDist: 0, facing: 'front'
     };
     cobaCont.userData = cobaObj;
@@ -1946,7 +1974,9 @@
           showBubble(t.x, t.y, t.name + ' đang nói…', 2000);
         } else {
           line = npcPersonaLine(t.npc);
-          showBubble(t.x, t.y, line, 4000);
+          // Phase C: offline memory tier, same display as online.
+          var tierSuffix = t.npc.talkTierName ? '\nThân thiết: ' + t.npc.talkTierName : '';
+          showBubble(t.x, t.y, line + tierSuffix, 4000);
           sfx('talk');
           vfx('talk', t.x, t.y);
         }
@@ -2858,6 +2888,15 @@
         } else if (n.isCoba) {
           updateCobaAnim(n, dt, 0, 0);
         }
+        // Phase C: reacting to a nearby accident — face the spot for ~4 s
+        // (the server already paused the walker; cô ba's flip stays owned
+        // by her own animator).
+        if (!n.isCoba && n.reactUntil && Date.now() < n.reactUntil) {
+          var faceR = n.face || n.container;
+          var rdx = (n.reactX !== undefined ? n.reactX : n.x) - n.x;
+          if (rdx < -0.5) faceR.scale.x = -1;
+          else if (rdx > 0.5) faceR.scale.x = 1;
+        }
         return;
       }
       // Knocked down by a car (offline accident): stay down 3 s, then walk on.
@@ -2880,7 +2919,39 @@
         if (stepX < -0.1) faceW.scale.x = -1;
         else if (stepX > 0.1) faceW.scale.x = 1;
       }
+      // Phase C: reacting to a nearby accident (offline) — face the spot.
+      if (!n.isCoba && n.reactUntil && Date.now() < n.reactUntil) {
+        var rdxW = (n.reactX !== undefined ? n.reactX : n.x) - n.x;
+        if (rdxW < -0.1) faceW.scale.x = -1;
+        else if (rdxW > 0.1) faceW.scale.x = 1;
+      }
       if (n.isCoba) updateCobaAnim(n, dt, stepX, stepY);
+    });
+  }
+
+  // Phase C: offline daily schedule — same destination bias as the
+  // server (_applySchedule). Re-applied when the game-clock period
+  // changes (ticker hook below). Walkers only; the guide has no walker.
+  var lastSchedulePeriod = null;
+  function applyOfflineSchedule(period) {
+    if (typeof M3 === 'undefined' || !M3.scheduleSpots) return;
+    var spots = M3.scheduleSpots(period);
+    npcs.forEach(function (n, idx) {
+      if (!n.walker || n.isTutorial) return;
+      var si = (typeof n.schedIdx === 'number') ? n.schedIdx : idx;
+      if (period === 'night' && si % 2 === 0) {
+        n.walker.bias = n.homePos || { x: n.x, y: n.y };
+        n.walker.biasWeight = 0.85;
+        n.walker.speed = 45; n.walker.pauseMult = 2;
+      } else if (spots.length) {
+        var s = spots[Math.floor(Math.random() * spots.length)];
+        n.walker.bias = { x: s.x, y: s.y };
+        n.walker.biasWeight = 0.7;
+        n.walker.speed = 90; n.walker.pauseMult = 1;
+      } else {
+        n.walker.bias = null;
+        n.walker.speed = 90; n.walker.pauseMult = 1;
+      }
     });
   }
 
@@ -3095,14 +3166,21 @@
 
   // M3 (§10.2): one random line from a walking NPC's persona (same
   // BotBrain personas the server uses — never the generic TALK_LINES).
+  // Phase C (offline mirror of the server memory): the client keeps its
+  // own per-NPC talk counts; the line comes from the tier pool, ~30% a
+  // time-of-day greeting. The tier is shown in the talk bubble by the
+  // caller (npc.talkTierName).
   function npcPersonaLine(npc) {
     if (typeof BotBrain === 'undefined' || !npc || !npc.personaId) return pick(TALK_LINES);
     var persona = null;
     BotBrain.PERSONAS.forEach(function (p) { if (p.id === npc.personaId) persona = p; });
     if (!persona) return pick(TALK_LINES);
-    var pool = persona.lines.filter(function (l) { return l !== npc.lastTalkLine; });
-    var line = pool.length ? pick(pool) : pick(persona.lines);
+    npc.talkCount = (npc.talkCount || 0) + 1;
+    var tier = BotBrain.talkTier(npc.talkCount);
+    var line = BotBrain.pickTalkLine(persona, tier, BotBrain.timePeriod(worldTime), npc.lastTalkLine);
     npc.lastTalkLine = line;
+    npc.talkTier = tier;
+    npc.talkTierName = BotBrain.talkTierName(tier);
     return line;
   }
 
@@ -3627,6 +3705,23 @@
           if (msg.npcId === 'npc-coba' && cobaNpc) cobaNpc.downUntil = Date.now() + 3000;
         }
       },
+      // Phase C: accident reactions — nearby walkers pause (server-side),
+      // face the accident spot for ~4 s (updateNPCs reads reactUntil)
+      // and show their reaction line. Cô Ba gets bubble + pause only:
+      // her flip stays owned by her own animator.
+      onNpcReact: function (msg) {
+        if (!msg || !msg.npcs || !msg.npcs.length) return;
+        msg.npcs.forEach(function (r) {
+          var n = null;
+          for (var i = 0; i < npcs.length; i++) {
+            if (npcs[i].id === r.npcId) { n = npcs[i]; break; }
+          }
+          if (!n) return;
+          showBubble(n.x, n.y, r.line, 4000);
+          n.reactUntil = Date.now() + 4000;
+          n.reactX = msg.x; n.reactY = msg.y;
+        });
+      },
       onNpcRemoved: function (id) {
         // M4: a picked-up / despawned taxi customer loses its sprite.
         if (taxiSprites[id]) {
@@ -3740,7 +3835,10 @@
           appendChatLog('', '', '— Nhiệm vụ tân thủ —', true);
           msg.quest.forEach(function (step) { appendChatLog('', '', step, true); });
         } else {
-          showBubble(msg.x, msg.y, msg.text, 4000);
+          // Phase C: player memory — show the relationship tier in the
+          // talk bubble (e.g. "Thân thiết: Bạn bè").
+          var tierText = msg.tierName ? '\nThân thiết: ' + msg.tierName : '';
+          showBubble(msg.x, msg.y, msg.text + tierText, 4000);
         }
       },
       // M3 (§3.4.3): someone fainted — doctors get the alert (minimap + log).
@@ -4465,6 +4563,14 @@
         var nextTime = worldTime + dt;
         if (nextTime >= DAY_MINUTES) worldDay++;
         worldTime = nextTime % DAY_MINUTES;
+        // Phase C: offline daily schedule — same bias as the server.
+        if (typeof M3 !== 'undefined' && M3.schedulePeriod) {
+          var schedPeriod = M3.schedulePeriod(worldTime);
+          if (schedPeriod !== lastSchedulePeriod) {
+            lastSchedulePeriod = schedPeriod;
+            applyOfflineSchedule(schedPeriod);
+          }
+        }
       }
       var hour = Math.floor(worldTime / 60) % 24;
       var dark = darknessFor(hour);

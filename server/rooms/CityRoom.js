@@ -32,6 +32,16 @@ const ACCIDENT_MIN_SPEED = 30; // px/s — a crawling car does not count as a hi
 const ACCIDENT_CASH_PCT = 0.30; // hit penalty: lose 30% of CASH (not bank)
 const ACCIDENT_HP_LOSS = 10; // hit penalty: lose 10 HP
 const NPC_DOWN_MS = 3000; // NPC knocked down by a car stays down 3 s, then walks on
+// Phase C (2026-11-28): accident reactions — walkers within this radius
+// pause, face the accident spot and show a reaction bubble for REACT_MS.
+const REACT_RADIUS = 400;
+const REACT_MS = 4000;
+// Phase C: bot job choice — a bot within this distance of its job target
+// counts as arrived (pickup / delivery / customer / destination).
+const BOT_JOB_ARRIVE_PX = 200;
+// Phase C: a bot job stage abandoned after this long (bot stuck / target
+// gone) so the bot never walks at a stale target forever.
+const BOT_JOB_TIMEOUT_MS = 180000;
 const ANIMAL_WANDER_R = 220; // animals wander within 220px of their home spot
 // M3: test hook. The local test suite (server/test/test.js) sets
 // DTA_ALLOW_TEST=1 and may send '__test_set' to set its OWN player's
@@ -105,6 +115,14 @@ class CityRoom extends Room {
     this.survival = new Map(); // playerId -> {hungerAcc, hpLossAcc, regenAcc, faintedUntil}
     this.bots = new Map(); // botId -> {personaId, brain, targetX, targetY, pauseUntil, speed, nextProactiveAt}
     this.walkers = new Map(); // npcId -> {targetX, targetY, pauseUntil, speed}
+    // Phase C (2026-11-28): PLAYER MEMORY — per-player talk counts per
+    // NPC, in-memory, room session only: playerId -> Map(npcId -> count).
+    // Tiers: 0-2 talks stranger, 3-7 acquaintance, 8+ friend. NO economy
+    // effects (no discounts, no gifts) — tiers only change talk lines.
+    this.npcTalkCounts = new Map();
+    // Phase C: daily schedule — last applied schedule period (null forces
+    // an apply on the first _secondTick).
+    this._schedulePeriod = null;
     // Traffic + accidents (2026-11-28): server-authoritative sim (shared
     // roadnet.js, fixed seed) — `traffic` is the sim list; `state.vehicles`
     // mirrors it for clients. `_accidentAt`: last hit ms per person (player,
@@ -191,6 +209,7 @@ class CityRoom extends Room {
 
   // ---------------------------------------------------------------- spawn
   _spawnBots() {
+    let botIdx = 0;
     for (const persona of BotBrain.PERSONAS) {
       const id = 'bot-' + persona.id;
       const near = randomOpenPointNearSpawn(800);
@@ -210,6 +229,10 @@ class CityRoom extends Room {
         brain: BotBrain.createBotState(persona.id),
         walker,
         nextProactiveAt: Date.now() + randRange(5000, 25000),
+        // Phase C: bot job choice — job is null when idle; nextJobAt is
+        // staggered so all 6 bots do not decide on the same tick.
+        job: null,
+        nextJobAt: Date.now() + 3000 + (botIdx++) * 2000,
       });
       this.clientData.set(id, { isBot: true });
     }
@@ -238,10 +261,14 @@ class CityRoom extends Room {
       // M3 (§10.2): walkers wander at 90 px/s (was 45-75), pause 3-8 s,
       // and each one has a BotBrain persona so "Nói chuyện" (§10.2) gets a
       // persona line in the matching voice (index-aligned with WALKER_AVATARS).
+      // Phase C: idx + homePos drive the daily schedule — even-index
+      // walkers go HOME at night (bias to their spawn spot).
       this.walkers.set(npc.id, {
         walker,
         personaId: WALKER_PERSONAS[i % WALKER_PERSONAS.length],
         lastTalkLine: null,
+        idx: i,
+        homePos: { x: p.x, y: p.y },
       });
     }
 
@@ -258,7 +285,10 @@ class CityRoom extends Room {
       avatar: 'coba',
     });
     this.state.npcs.set(coba.id, coba);
-    this.walkers.set(coba.id, { walker: cobaWalker, personaId: null, lastTalkLine: null });
+    this.walkers.set(coba.id, {
+      walker: cobaWalker, personaId: null, lastTalkLine: null,
+      idx: 10, homePos: { x: cobaWalker.x, y: cobaWalker.y },
+    });
   }
 
   // Server-authoritative traffic (2026-11-28): the server steps the shared
@@ -462,6 +492,14 @@ class CityRoom extends Room {
     this.onMessage('taxi', (c, msg) => this._onTaxi(c, msg));
     this.onMessage('motel', (c, msg) => this._onMotel(c, msg));
     if (ALLOW_TEST) this.onMessage('__test_set', (c, msg) => this._onTestSet(c, msg));
+    // Phase C test hook: force an accident reaction at (x, y) so the
+    // live test can verify npc_react without waiting for a real crash.
+    // Ignored entirely unless DTA_ALLOW_TEST=1.
+    if (ALLOW_TEST) this.onMessage('__test_react', (c, msg) => {
+      if (msg && typeof msg.x === 'number' && typeof msg.y === 'number') {
+        this._broadcastAccidentReaction(msg.x, msg.y, Date.now(), null);
+      }
+    });
   }
 
   // M3 test hook (see ALLOW_TEST above): set the SENDER's own hp/hunger/
@@ -1153,12 +1191,24 @@ class CityRoom extends Room {
       const w = this.walkers.get(npc.id);
       const personaId = (w && w.personaId) || 'mai';
       const persona = BotBrain.PERSONAS.find((pp) => pp.id === personaId) || BotBrain.PERSONAS[0];
-      const pool = persona.lines.filter((l) => !w || l !== w.lastTalkLine);
-      const line = pool.length ? pool[Math.floor(Math.random() * pool.length)] : persona.lines[0];
+      // Phase C: PLAYER MEMORY — count this player's talks with this NPC
+      // (room session, in-memory). Tier 0 = stranger (0-2), 1 =
+      // acquaintance (3-7), 2 = friend (8+). The line comes from the
+      // tier pool, ~30% a time-of-day greeting instead. NO economy
+      // effects — the tier only changes what the NPC says.
+      let counts = this.npcTalkCounts.get(client.sessionId);
+      if (!counts) { counts = new Map(); this.npcTalkCounts.set(client.sessionId, counts); }
+      const talks = (counts.get(npc.id) || 0) + 1;
+      counts.set(npc.id, talks);
+      const tier = BotBrain.talkTier(talks);
+      const line = BotBrain.pickTalkLine(
+        persona, tier, BotBrain.timePeriod(this.state.worldTime),
+        w ? w.lastTalkLine : null);
       if (w) w.lastTalkLine = line;
       client.send('npc_talk', {
         npcId: npc.id, name: npc.name, isGuide: false, x: npc.x, y: npc.y,
         personaId: persona.id, text: line,
+        tier, tierName: BotBrain.talkTierName(tier), talks,
       });
     } else {
       client.send('interact_error', { error: 'NOT_IMPLEMENTED_M1', action: msg.action || null });
@@ -1396,7 +1446,9 @@ class CityRoom extends Room {
         this.state.npcs.delete(npcId);
       }
     }
-    if (this.taxiMode.size > 0) {
+    if (this.taxiMode.size > 0 || [...this.bots.values()].some((b) => b.job && b.job.kind === 'taxi')) {
+      // Phase C: bot taxi drivers also attract NPC customers (otherwise
+      // bots could never take a taxi job in a room with no human driver).
       let guard = 0;
       while (this.taxiCustomers.size < want && guard++ < 4) {
         if (!this._spawnTaxiCustomer(now)) break;
@@ -2019,6 +2071,123 @@ class CityRoom extends Room {
     n.x = w.x; n.y = w.y; n.targetX = w.x; n.targetY = w.y;
   }
 
+  // Phase C: BOT JOB CHOICE — every ~10 s an idle bot compares the best
+  // FREE shipper slot vs the best WAITING taxi customer (M3 pure
+  // helpers) and takes the higher expected pay. Bots NEVER lock a real
+  // order slot and NEVER touch the real economy: the "work" is visual
+  // only (walk to the pickup/destination + a bubble with the earned
+  // amount). There is NO shipper bidding/auction (accept is
+  // first-come-first-served, §6.2), so there is no auction to compare
+  // against — best-pay selection among the existing mechanics only.
+  _botJobTick(now) {
+    for (const [botId, bot] of this.bots) {
+      const p = this.state.players.get(botId);
+      if (!p) continue;
+      if (now < (this._npcDown.get(botId) || 0)) continue; // knocked down: wait
+      if (!bot.job) {
+        if (now < (bot.nextJobAt || 0)) continue;
+        this._decideBotJob(botId, bot, p, now);
+      } else {
+        this._advanceBotJob(botId, bot, p, now);
+      }
+    }
+  }
+
+  _decideBotJob(botId, bot, p, now) {
+    const isNight = M3.isNightWorld(this.state.worldTime);
+    const shipper = M3.bestShipperPayFor(this.orderPool, isNight);
+    const customers = [];
+    for (const [npcId, c] of this.taxiCustomers) {
+      const n = this.state.npcs.get(npcId);
+      if (!n) continue;
+      customers.push({ npcId, x: n.x, y: n.y, destX: c.destX, destY: c.destY, poiName: c.poiName });
+    }
+    const taxi = M3.bestTaxiPayFor(customers, isNight);
+    const kind = M3.chooseBotJob(shipper, taxi);
+    bot.nextJobAt = now + 10000;
+    if (!kind) return; // nothing available — stay idle, retry in 10 s
+    const walker = bot.walker;
+    walker.ignoreHome = true; // jobs can take the bot far from the plaza
+    if (kind === 'shipper') {
+      bot.job = {
+        kind: 'shipper', stage: 'pickup',
+        pickupX: shipper.pickupX, pickupY: shipper.pickupY,
+        targetX: shipper.targetX, targetY: shipper.targetY,
+        poiName: shipper.poiName, expectedPay: shipper.pay,
+        decidedAt: now,
+      };
+      walker.bias = { x: shipper.pickupX, y: shipper.pickupY };
+      walker.biasWeight = 0.9;
+      p.chatBubble = 'Đi giao hàng đây! (thưởng ~' + shipper.pay.toLocaleString('vi-VN') + 'đ)';
+      p.chatBubbleUntil = now + CHAT_BUBBLE_MS;
+    } else {
+      bot.job = {
+        kind: 'taxi', stage: 'pickup',
+        npcId: taxi.npcId,
+        pickupX: taxi.x, pickupY: taxi.y,
+        targetX: taxi.destX, targetY: taxi.destY,
+        poiName: taxi.poiName, expectedPay: taxi.pay,
+        decidedAt: now,
+      };
+      walker.bias = { x: taxi.x, y: taxi.y };
+      walker.biasWeight = 0.9;
+      p.chatBubble = 'Đi chở khách đây! (thưởng ~' + taxi.pay.toLocaleString('vi-VN') + 'đ)';
+      p.chatBubbleUntil = now + CHAT_BUBBLE_MS;
+    }
+  }
+
+  _advanceBotJob(botId, bot, p, now) {
+    const job = bot.job;
+    const walker = bot.walker;
+    // Abandon a stale job (bot stuck / target gone) after 3 min.
+    if (now - job.decidedAt > BOT_JOB_TIMEOUT_MS) {
+      this._endBotJob(bot, p, null);
+      return;
+    }
+    if (job.kind === 'shipper') {
+      if (job.stage === 'pickup') {
+        if (dist(p.x, p.y, job.pickupX, job.pickupY) <= BOT_JOB_ARRIVE_PX) {
+          job.stage = 'deliver';
+          walker.bias = { x: job.targetX, y: job.targetY };
+          p.chatBubble = 'Đã lấy hàng, đang giao tới ' + (job.poiName || 'điểm giao') + '…';
+          p.chatBubbleUntil = now + CHAT_BUBBLE_MS;
+        }
+      } else if (dist(p.x, p.y, job.targetX, job.targetY) <= BOT_JOB_ARRIVE_PX) {
+        p.chatBubble = 'Giao hàng xong! +' + job.expectedPay.toLocaleString('vi-VN') + 'đ';
+        p.chatBubbleUntil = now + CHAT_BUBBLE_MS;
+        this._endBotJob(bot, p, now);
+      }
+    } else if (job.kind === 'taxi') {
+      if (job.stage === 'pickup') {
+        // The customer may have despawned (5 min) or been taken — then
+        // the job is over; the bot goes back to idle.
+        const n = job.npcId ? this.state.npcs.get(job.npcId) : null;
+        if (!n) { this._endBotJob(bot, p, now); return; }
+        if (dist(p.x, p.y, n.x, n.y) <= BOT_JOB_ARRIVE_PX) {
+          // Pick the customer up: remove the waiting NPC (like a real
+          // pickup — the client drops the sprite via onNpcRemoved).
+          this.taxiCustomers.delete(job.npcId);
+          this.state.npcs.delete(job.npcId);
+          job.stage = 'dropoff';
+          walker.bias = { x: job.targetX, y: job.targetY };
+          p.chatBubble = 'Đã đón khách, đang chở tới ' + (job.poiName || 'điểm đến') + '…';
+          p.chatBubbleUntil = now + CHAT_BUBBLE_MS;
+        }
+      } else if (dist(p.x, p.y, job.targetX, job.targetY) <= BOT_JOB_ARRIVE_PX) {
+        p.chatBubble = 'Chở khách xong! +' + job.expectedPay.toLocaleString('vi-VN') + 'đ';
+        p.chatBubbleUntil = now + CHAT_BUBBLE_MS;
+        this._endBotJob(bot, p, now);
+      }
+    }
+  }
+
+  _endBotJob(bot, p, now) {
+    bot.job = null;
+    bot.nextJobAt = (now || Date.now()) + 8000 + Math.random() * 8000;
+    bot.walker.bias = null;
+    bot.walker.ignoreHome = false;
+  }
+
   // Animals wander freely around their home spot (mirror of the client's
   // spawnAnimal/updateAnimals): pick a target within ANIMAL_WANDER_R that
   // is an open point and whose straight path never crosses a road or a
@@ -2092,6 +2261,7 @@ class CityRoom extends Room {
       player.hp = 0;
       console.log(`[city] ${player.name} hit by ${vehicle.kind} at lethal HP — fainting instead`);
       this.broadcast('accident', { playerId: sessionId, name: player.name, x: player.x, y: player.y, lethal: true, at: now });
+      this._broadcastAccidentReaction(player.x, player.y, now, null);
       return;
     }
     const lost = Math.floor(player.cash * ACCIDENT_CASH_PCT);
@@ -2122,6 +2292,7 @@ class CityRoom extends Room {
     this._schedulePersist(sessionId);
     console.log(`[city] ${player.name} hit by ${vehicle.kind} — hospital, -${lost}đ (30%), -10 HP`);
     this.broadcast('accident', { playerId: sessionId, name: player.name, x: fromX, y: fromY, lost, hp: player.hp, vehicleLeft, at: now });
+    this._broadcastAccidentReaction(fromX, fromY, now, null);
   }
 
   // NPC / bot / animal hit by traffic: falls down for 3 s, then recovers
@@ -2133,6 +2304,63 @@ class CityRoom extends Room {
     this._npcDown.set(id, now + NPC_DOWN_MS);
     console.log(`[city] ${name} (${id}) knocked down by traffic — down 3 s`);
     this.broadcast('accident', { npcId: id, name, x, y, at: now });
+    this._broadcastAccidentReaction(x, y, now, id);
+  }
+
+  // Phase C: EVENT REACTIONS — walkers within REACT_RADIUS of an
+  // accident pause for REACT_MS, face the spot (client-side, via the
+  // npc_react message) and show a short reaction bubble for ~4 s.
+  // The victim itself never reacts; NPCs already knocked down stay down.
+  // Cô Ba gets the bubble + pause like any walker — her flip stays owned
+  // by her own animator, so the client skips facing for her.
+  _broadcastAccidentReaction(x, y, now, excludeId) {
+    const reacted = [];
+    for (const [npcId, w] of this.walkers) {
+      if (npcId === excludeId) continue;
+      const n = this.state.npcs.get(npcId);
+      if (!n) continue;
+      if (now < (this._npcDown.get(npcId) || 0)) continue;
+      if (dist(n.x, n.y, x, y) > REACT_RADIUS) continue;
+      // Pause 4 s — RoadNet.stepWalker respects walker.pauseUntil.
+      w.walker.pauseUntil = now + REACT_MS;
+      const persona = BotBrain.PERSONAS.find((pp) => pp.id === ((w && w.personaId) || 'mai')) || BotBrain.PERSONAS[0];
+      const line = BotBrain.pickReactLine(persona, w.lastTalkLine);
+      if (w) w.lastTalkLine = line;
+      reacted.push({ npcId, line });
+    }
+    if (reacted.length) {
+      this.broadcast('npc_react', { npcs: reacted, x, y, at: now });
+    }
+  }
+
+  // Phase C: DAILY SCHEDULE — bias walker destinations by the game clock.
+  // Morning -> market/shop, noon -> shop/market (food), evening ->
+  // cafe/plaza; 13:00-17:00 (roam) has no bias. At night HALF the
+  // walkers (even idx) go HOME: bias to their spawn spot, slower
+  // (45 px/s), longer pauses (pauseMult 2); odd walkers keep roaming.
+  // Only the destination choice is biased; pause behaviour is otherwise
+  // unchanged. Called from _secondTick when the period changes.
+  _applySchedule(period) {
+    const spots = M3.scheduleSpots(period);
+    for (const [npcId, w] of this.walkers) {
+      const walker = w.walker;
+      if (period === 'night' && (w.idx % 2 === 0)) {
+        walker.bias = w.homePos || null;
+        walker.biasWeight = 0.85;
+        walker.speed = 45;
+        walker.pauseMult = 2;
+      } else if (spots.length) {
+        const s = spots[Math.floor(Math.random() * spots.length)];
+        walker.bias = { x: s.x, y: s.y };
+        walker.biasWeight = 0.7;
+        walker.speed = 90;
+        walker.pauseMult = 1;
+      } else {
+        walker.bias = null;
+        walker.speed = 90;
+        walker.pauseMult = 1;
+      }
+    }
   }
 
   // 1 s tick: world clock, survival, faint auto-revive, bot proactive chat.
@@ -2141,6 +2369,16 @@ class CityRoom extends Room {
     const now = Date.now();
     this.state.worldTime = (this.state.worldTime + 1) % 1440; // 1 game-min / real sec
     this.state.serverNow = now; // client chỉnh lệch giờ để đèn tín hiệu khớp server
+
+    // Phase C: daily schedule — re-apply walker destination bias when
+    // the game-clock period changes (06:00/11:00/13:00/17:00/21:00).
+    const period = M3.schedulePeriod(this.state.worldTime);
+    if (period !== this._schedulePeriod) {
+      this._schedulePeriod = period;
+      this._applySchedule(period);
+    }
+    // Phase C: bot job choice — idle bots decide, working bots advance.
+    this._botJobTick(now);
 
     for (const [id, p] of this.state.players) {
       // Expire chat bubbles.

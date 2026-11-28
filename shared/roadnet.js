@@ -206,7 +206,13 @@
     }
     return best;
   }
-  // opts: {speed, rnd, home:{x,y}, radius, pause:false}
+  // opts: {speed, rnd, home:{x,y}, radius, pause:false,
+  //         bias:{x,y}, biasWeight:0..1, pauseMult, ignoreHome}
+  // Phase C (2026-11-28): bias pulls the walker toward a point (daily
+  // schedule / bot jobs) — pickLink prefers the link whose destination
+  // is closest to the bias with probability biasWeight. pauseMult
+  // multiplies the 2-6 s node pause (night home-goers idle longer).
+  // ignoreHome lets a bot on a job leave its home radius.
   function createWalker(startId, opts) {
     opts = opts || {};
     var p = PED[startId];
@@ -215,6 +221,10 @@
       speed: opts.speed || 90, rnd: opts.rnd || Math.random,
       home: opts.home || null, radius: opts.radius || 0,
       canPause: opts.pause !== false, pauseUntil: 0, waiting: false,
+      bias: opts.bias || null,
+      biasWeight: (opts.biasWeight == null ? 0.7 : opts.biasWeight),
+      pauseMult: opts.pauseMult || 1,
+      ignoreHome: !!opts.ignoreHome,
       offset: (opts.rnd || Math.random)() * 24 - 12 // không đi chồng khít lên nhau
     };
   }
@@ -222,7 +232,7 @@
     var links = PED[w.at].links;
     var choices = links.filter(function (l) { return l.to !== w.prev; });
     if (!choices.length) choices = links;
-    if (w.home && w.radius) {
+    if (w.home && w.radius && !w.ignoreHome) {
       var here = PED[w.at];
       var d0 = Math.hypot(here.x - w.home.x, here.y - w.home.y);
       if (d0 > w.radius) { // đi quá xa: chọn hướng quay về
@@ -231,6 +241,12 @@
                  Math.hypot(PED[b.to].x - w.home.x, PED[b.to].y - w.home.y);
         }).slice(0, 1);
       }
+    } else if (w.bias && w.rnd() < w.biasWeight) {
+      // Phase C: destination bias — head toward the bias point.
+      choices = links.slice().sort(function (a, b) {
+        return Math.hypot(PED[a.to].x - w.bias.x, PED[a.to].y - w.bias.y) -
+               Math.hypot(PED[b.to].x - w.bias.x, PED[b.to].y - w.bias.y);
+      }).slice(0, 1);
     }
     return choices[Math.floor(w.rnd() * choices.length)];
   }
@@ -259,7 +275,7 @@
     var step = w.speed * dt;
     if (d <= step) {
       w.x = tx; w.y = ty; w.prev = w.at; w.at = w.to; w.to = null; w.cross = null;
-      if (w.canPause && w.rnd() < 0.15) w.pauseUntil = now + 2000 + w.rnd() * 4000;
+      if (w.canPause && w.rnd() < 0.15) w.pauseUntil = now + (2000 + w.rnd() * 4000) * (w.pauseMult || 1);
     } else {
       w.x += dx / d * step; w.y += dy / d * step;
     }

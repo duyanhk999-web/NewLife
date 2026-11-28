@@ -353,6 +353,9 @@
       // lost?, hp?, vehicleLeft?, lethal?, at} — main.js shows VFX/SFX +
       // chat/bubble.
       room.onMessage('accident', function (msg) { self._call('onAccident', msg); });
+      // Phase C: accident reactions — {npcs:[{npcId, line}], x, y, at}.
+      // Nearby walkers pause, face the spot and show the reaction line.
+      room.onMessage('npc_react', function (msg) { self._call('onNpcReact', msg); });
 
       room.onLeave(function (code) {
         self.connected = false;

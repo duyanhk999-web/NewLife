@@ -231,6 +231,82 @@
     return h >= 18 || h < 6;
   }
 
+  // ---- Phase C: daily schedule (2026-11-28) ----
+  // Walkers bias their destination by the game clock (worldTime):
+  //   morning 06:00-11:00 -> market + shop
+  //   noon    11:00-13:00 -> shop + market (food)
+  //   roam    13:00-17:00 -> no bias (wander anywhere)
+  //   evening 17:00-21:00 -> cafe + plaza
+  //   night   21:00-06:00 -> half the walkers go HOME (handled by the
+  //   caller: even-index walkers bias to their spawn spot, slower,
+  //   longer pauses); scheduleSpots('night') returns [].
+  // Only the DESTINATION choice is biased — pause behaviour is unchanged
+  // (except the night home-goers, who idle longer/slower).
+  var SCHEDULE_SPOTS = {
+    market: { x: 4155, y: 4065 }, // Chợ
+    shop: { x: 3225, y: 1565 },   // Cửa Hàng Tiện Lợi 24/7
+    cafe: { x: 2760, y: 4380 },   // Quán Cà Phê
+    plaza: { x: 2430, y: 2650 }   // Quảng Trường Trung Tâm
+  };
+  function schedulePeriod(worldTime) {
+    var h = Math.floor(((worldTime || 0) % 1440) / 60);
+    if (h >= 6 && h < 11) return 'morning';
+    if (h >= 11 && h < 13) return 'noon';
+    if (h >= 13 && h < 17) return 'roam';
+    if (h >= 17 && h < 21) return 'evening';
+    return 'night';
+  }
+  function scheduleSpots(period) {
+    if (period === 'morning') return [SCHEDULE_SPOTS.market, SCHEDULE_SPOTS.shop];
+    if (period === 'noon') return [SCHEDULE_SPOTS.shop, SCHEDULE_SPOTS.market];
+    if (period === 'evening') return [SCHEDULE_SPOTS.cafe, SCHEDULE_SPOTS.plaza];
+    return []; // 'roam' and 'night' have no destination bias
+  }
+
+  // ---- Phase C: bot job choice (2026-11-28) — pure helpers ----
+  // Bots compare the best-paying available work among CURRENT systems:
+  // the best FREE shipper slot vs the best WAITING taxi customer, and
+  // take the higher expected pay. There is NO shipper bidding/auction
+  // (accept is first-come-first-served, §6.2), so nothing to bid on.
+  // Bots walk (vehicleId '' -> x1.00 pay multiplier) and never lock a
+  // real order slot or touch the real economy — the job is visual only.
+  // slots: [{pickupX, pickupY, targetX, targetY, lockedBy, poiName}]
+  //   -> {pay, pickupX, pickupY, targetX, targetY, poiName} | null
+  function bestShipperPayFor(slots, isNight) {
+    var best = null;
+    for (var i = 0; i < (slots || []).length; i++) {
+      var s = slots[i];
+      if (!s || s.lockedBy) continue;
+      var pay = deliveryRewardFor(dist(s.pickupX, s.pickupY, s.targetX, s.targetY), isNight, '');
+      if (!best || pay > best.pay) {
+        best = { pay: pay, pickupX: s.pickupX, pickupY: s.pickupY,
+          targetX: s.targetX, targetY: s.targetY, poiName: s.poiName || null };
+      }
+    }
+    return best;
+  }
+  // customers: [{x, y, destX, destY, poiName}]
+  //   -> {pay, npcId, x, y, destX, destY, poiName} | null
+  function bestTaxiPayFor(customers, isNight) {
+    var best = null;
+    for (var i = 0; i < (customers || []).length; i++) {
+      var c = customers[i];
+      if (!c) continue;
+      var pay = taxiFare(dist(c.x, c.y, c.destX, c.destY), isNight).driverReceives;
+      if (!best || pay > best.pay) {
+        best = { pay: pay, npcId: c.npcId || null, x: c.x, y: c.y,
+          destX: c.destX, destY: c.destY, poiName: c.poiName || null };
+      }
+    }
+    return best;
+  }
+  // Tie -> shipper (more common); both null -> null (stay idle).
+  function chooseBotJob(shipper, taxi) {
+    if (!shipper && !taxi) return null;
+    if (shipper && (!taxi || shipper.pay >= taxi.pay)) return 'shipper';
+    return 'taxi';
+  }
+
   // §6.2: random delivery point near a POI (open ground, not inside a
   // building, not on a road). randFn defaults to Math.random; pass a seeded
   // function in tests for determinism. excludePoiId (optional) skips one
@@ -421,6 +497,11 @@
     deliveryRewardDynamic: deliveryRewardDynamic,
     faintLoss: faintLoss, hospitalFee: hospitalFee, deductFee: deductFee,
     isNightWorld: isNightWorld, pickDeliveryPoint: pickDeliveryPoint,
+    // Phase C: daily schedule + bot job choice (pure, testable).
+    SCHEDULE_SPOTS: SCHEDULE_SPOTS, schedulePeriod: schedulePeriod,
+    scheduleSpots: scheduleSpots,
+    bestShipperPayFor: bestShipperPayFor, bestTaxiPayFor: bestTaxiPayFor,
+    chooseBotJob: chooseBotJob,
     doctorRewardCheck: doctorRewardCheck, collusionFlagged: collusionFlagged,
     vehicleSpeed: vehicleSpeed, speedWithHunger: speedWithHunger,
     vehicleCapacityKg: vehicleCapacityKg, vehiclePrice: vehiclePrice,
